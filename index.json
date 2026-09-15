@@ -1,11 +1,11 @@
 [
   {
     "name": "Yurivan",
-    "id": 384721951
+    "id": 384721951,
     "baseUrl": "https://www.yurivan.com",
     "lang": "en",
     "typeSource": "single",
-    "iconUrl": "https://www.yurivan.com/favicon.ico",
+    "iconUrl": "https://www.google.com/s2/favicons?sz=128&domain=https://www.yurivan.com",
     "dateFormat": "",
     "dateFormatLocale": "",
     "isNsfw": true,
