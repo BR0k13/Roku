@@ -8,7 +8,7 @@ const mangayomiSources = [
         "typeSource": "single",
         "itemType": 0,
         "isNsfw": true,
-        "version": "0.1.2",
+        "version": "0.1.3",
         "pkgPath": "manga/src/en/yurivan.js",
         "notes": "Yurivan manga source"
     }
@@ -48,11 +48,39 @@ class DefaultExtension extends MProvider {
         return this.source.baseUrl + "/" + url;
     }
 
-    async getPopular(page) {
+    getSortParam(sortIndex) {
 
-        const pageUrl = page > 1
-            ? this.source.baseUrl + "/?page=" + page
-            : this.source.baseUrl;
+        const SORT_PARAMS = [
+            "",
+            "sort=fresh",
+            "sort=top-rated"
+        ];
+
+        return SORT_PARAMS[sortIndex] || "";
+    }
+
+    buildListUrl(page, sortParam) {
+
+        const params = [];
+
+        if (sortParam) {
+            params.push(sortParam);
+        }
+
+        if (page > 1) {
+            params.push("page=" + page);
+        }
+
+        const query = params.length > 0
+            ? "?" + params.join("&")
+            : "";
+
+        return this.source.baseUrl + query;
+    }
+
+    async fetchList(page, sortParam) {
+
+        const pageUrl = this.buildListUrl(page, sortParam);
 
         const response = await this.client.get(
             pageUrl,
@@ -124,12 +152,35 @@ class DefaultExtension extends MProvider {
         };
     }
 
+    async getPopular(page) {
+        return await this.fetchList(page, this.getSortParam(0));
+    }
+
     async getLatestUpdates(page) {
-        return await this.getPopular(page);
+        return await this.fetchList(page, this.getSortParam(1));
     }
 
     async search(query, page, filters) {
-        return await this.getPopular(page);
+
+        let sortIndex = 0;
+
+        if (filters && filters.length > 0) {
+
+            for (const filter of filters) {
+
+                if (
+                    filter.state &&
+                    typeof filter.state.index === "number"
+                ) {
+                    sortIndex = filter.state.index;
+                }
+            }
+        }
+
+        return await this.fetchList(
+            page,
+            this.getSortParam(sortIndex)
+        );
     }
 
     async getDetail(url) {
@@ -137,11 +188,10 @@ class DefaultExtension extends MProvider {
         const absoluteUrl =
             this.makeAbsoluteUrl(url);
 
-        const response =
-            await this.client.get(
-                absoluteUrl,
-                this.getHeaders(absoluteUrl)
-            );
+        const response = await this.client.get(
+            absoluteUrl,
+            this.getHeaders(absoluteUrl)
+        );
 
         const document =
             new Document(response.body);
@@ -184,7 +234,6 @@ class DefaultExtension extends MProvider {
             ) {
                 manga.imageUrl =
                     this.makeAbsoluteUrl(href);
-
                 break;
             }
         }
@@ -214,9 +263,7 @@ class DefaultExtension extends MProvider {
         // AUTHOR
 
         const creatorLinks =
-            document.select(
-                'a[href*="/creator/"]'
-            );
+            document.select('a[href*="/creator/"]');
 
         if (creatorLinks.length > 0) {
 
@@ -227,9 +274,7 @@ class DefaultExtension extends MProvider {
         // TAGS
 
         const tagLinks =
-            document.select(
-                'a[href*="/tag/"]'
-            );
+            document.select('a[href*="/tag/"]');
 
         for (const tag of tagLinks) {
 
@@ -249,33 +294,29 @@ class DefaultExtension extends MProvider {
         const chapterLinks =
             document.select("a");
 
+        const seenChapterNumbers = new Set();
+
         for (const chapterLink of chapterLinks) {
 
             const chapterUrl =
                 chapterLink.attr("href");
 
+            if (!chapterUrl) {
+                continue;
+            }
+
+            const linkText =
+                chapterLink.text.trim().toLowerCase().replace(/\s+/g, " ");
+
             if (
-                !chapterUrl ||
-                !chapterUrl.includes("/read")
+                linkText.includes("start reading") ||
+                linkText.includes("bonus book")
             ) {
                 continue;
             }
 
-            /*
-             * ONLY ACCEPT REAL CHAPTER LINKS
-             *
-             * Yurivan also has links such as:
-             * Start Reading
-             * Bonus Book: Ravishing Elichi
-             *
-             * Those don't contain chapter=N,
-             * so we ignore them.
-             */
-
             const match =
-                chapterUrl.match(
-                    /[?&]chapter=([0-9]+)/
-                );
+                chapterUrl.match(/chapter=([0-9]+)/);
 
             if (!match) {
                 continue;
@@ -284,33 +325,15 @@ class DefaultExtension extends MProvider {
             const chapterNumber =
                 match[1];
 
-            const chapterName =
-                "Chapter " + chapterNumber;
-
-            const finalUrl =
-                this.makeAbsoluteUrl(
-                    chapterUrl
-                );
-
-            // Prevent duplicate chapters
-
-            let duplicate = false;
-
-            for (const existing of manga.chapters) {
-
-                if (existing.url === finalUrl) {
-                    duplicate = true;
-                    break;
-                }
-            }
-
-            if (duplicate) {
+            if (seenChapterNumbers.has(chapterNumber)) {
                 continue;
             }
 
+            seenChapterNumbers.add(chapterNumber);
+
             manga.chapters.push({
-                name: chapterName,
-                url: finalUrl
+                name: "Chapter " + chapterNumber,
+                url: this.makeAbsoluteUrl(chapterUrl)
             });
         }
 
@@ -322,24 +345,11 @@ class DefaultExtension extends MProvider {
         const readerUrl =
             this.makeAbsoluteUrl(url);
 
-        console.log(
-            "=== YURIVAN PAGE TEST ==="
-        );
-
-        console.log(
-            "READER URL: " + readerUrl
-        );
-
         const response =
             await this.client.get(
                 readerUrl,
                 this.getHeaders(readerUrl)
             );
-
-        console.log(
-            "HTML LENGTH: " +
-            response.body.length
-        );
 
         const document =
             new Document(response.body);
@@ -350,19 +360,7 @@ class DefaultExtension extends MProvider {
         const images =
             document.select("img");
 
-        console.log(
-            "TOTAL LINKS: " +
-            links.length
-        );
-
-        console.log(
-            "TOTAL IMAGES: " +
-            images.length
-        );
-
         const pages = [];
-
-        // IMAGE LINKS
 
         for (const element of links) {
 
@@ -374,11 +372,6 @@ class DefaultExtension extends MProvider {
                 href.includes("img.yurivan.com")
             ) {
 
-                console.log(
-                    "FOUND IMAGE LINK: " +
-                    href
-                );
-
                 const imageUrl =
                     this.makeAbsoluteUrl(href);
 
@@ -387,13 +380,6 @@ class DefaultExtension extends MProvider {
                 }
             }
         }
-
-        console.log(
-            "PAGES FROM LINKS: " +
-            pages.length
-        );
-
-        // IMAGE SRC FALLBACK
 
         if (pages.length === 0) {
 
@@ -417,11 +403,6 @@ class DefaultExtension extends MProvider {
                     src.includes("img.yurivan.com")
                 ) {
 
-                    console.log(
-                        "FOUND IMAGE SRC: " +
-                        src
-                    );
-
                     const imageUrl =
                         this.makeAbsoluteUrl(src);
 
@@ -431,11 +412,6 @@ class DefaultExtension extends MProvider {
                 }
             }
         }
-
-        console.log(
-            "FINAL PAGE COUNT: " +
-            pages.length
-        );
 
         return pages;
     }
