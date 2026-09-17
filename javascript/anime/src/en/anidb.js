@@ -123,7 +123,7 @@ class DefaultExtension extends MProvider {
             hasNextPage: list.length > 0
         };
     }
-    
+
     async getDetail(url) {
 
         const response =
@@ -138,26 +138,52 @@ class DefaultExtension extends MProvider {
             document.selectFirst("h1");
 
         if (titleElement) {
-            title = titleElement.text.trim();
+            title =
+                titleElement.text.trim();
+        }
+
+        let imageUrl = "";
+
+        const image =
+            document.selectFirst("img");
+
+        if (image) {
+
+            let src =
+                image.attr("src");
+
+            if (!src) {
+                src =
+                    image.attr("data-src");
+            }
+
+            if (src) {
+                imageUrl =
+                    this.makeAbsoluteUrl(src);
+            }
         }
 
         let description = "";
 
-        const descriptionElement =
-            document.selectFirst(
-                '[class*="description"], [class*="synopsis"]'
-            );
+        const synopsisHeading =
+            document.selectFirst("h2");
 
-        if (descriptionElement) {
-            description =
-                descriptionElement.text.trim();
+        if (synopsisHeading) {
+
+            const parent =
+                synopsisHeading.parent();
+
+            if (parent) {
+                description =
+                    parent.text.trim();
+            }
         }
 
         const genres = [];
 
         const genreElements =
             document.select(
-                'a[href*="genre"], a[href*="genres"]'
+                'a[href*="genre"]'
             );
 
         for (const element of genreElements) {
@@ -177,10 +203,11 @@ class DefaultExtension extends MProvider {
 
         const episodeLinks =
             document.select(
-                'a[href*="/episode"]'
+                'a[href*="-episode-"]'
             );
 
-        const seenEpisodes = new Set();
+        const seenEpisodes =
+            new Set();
 
         for (const element of episodeLinks) {
 
@@ -194,7 +221,11 @@ class DefaultExtension extends MProvider {
             const episodeUrl =
                 this.makeAbsoluteUrl(href);
 
-            if (seenEpisodes.has(episodeUrl)) {
+            if (
+                seenEpisodes.has(
+                    episodeUrl
+                )
+            ) {
                 continue;
             }
 
@@ -205,7 +236,9 @@ class DefaultExtension extends MProvider {
                 continue;
             }
 
-            seenEpisodes.add(episodeUrl);
+            seenEpisodes.add(
+                episodeUrl
+            );
 
             episodes.push({
                 name: episodeName,
@@ -218,6 +251,7 @@ class DefaultExtension extends MProvider {
         return {
             url: url,
             title: title,
+            imageUrl: imageUrl,
             description: description,
             author: "",
             genre: genres,
@@ -225,4 +259,5 @@ class DefaultExtension extends MProvider {
             episodes: episodes
         };
     }
+
 }
