@@ -8,7 +8,7 @@ const mangayomiSources = [
         "typeSource": "single",
         "itemType": 1,
         "isNsfw": false,
-        "version": "0.1.5",
+        "version": "0.1.6",
         "pkgPath": "anime/src/en/anidb.js",
         "notes": "AniDB anime source"
     }
@@ -168,20 +168,89 @@ class DefaultExtension extends MProvider {
             }
         }
 
+        /*
+         * Fallback in case the cover image
+         * is not inside an image link.
+         */
+
+        if (!imageUrl) {
+
+            const images =
+                document.select("img");
+
+            for (const image of images) {
+
+                let src =
+                    image.attr("src");
+
+                if (!src) {
+                    src =
+                        image.attr("data-src");
+                }
+
+                if (!src) {
+                    continue;
+                }
+
+                if (
+                    src.includes("wp.com")
+                ) {
+                    imageUrl =
+                        this.makeAbsoluteUrl(src);
+
+                    break;
+                }
+            }
+        }
+
         /* -------------------------
            SYNOPSIS
         ------------------------- */
 
         let description = "";
 
-        const synopsis =
-            document.selectFirst(
-                "h2 + p"
-            );
+        const paragraphs =
+            document.select("p");
 
-        if (synopsis) {
-            description =
-                synopsis.text.trim();
+        for (const element of paragraphs) {
+
+            const text =
+                element.text.trim();
+
+            if (!text) {
+                continue;
+            }
+
+            /*
+             * Ignore comment form text.
+             */
+
+            if (
+                text.includes(
+                    "Your email address will not be published"
+                )
+            ) {
+                continue;
+            }
+
+            if (
+                text.includes(
+                    "Required fields are marked"
+                )
+            ) {
+                continue;
+            }
+
+            /*
+             * Ignore very short paragraphs.
+             */
+
+            if (text.length < 20) {
+                continue;
+            }
+
+            description = text;
+            break;
         }
 
         /* -------------------------
@@ -218,24 +287,36 @@ class DefaultExtension extends MProvider {
             new Set();
 
         /*
-         * Get the anime slug from the
-         * current detail URL.
+         * Get the exact anime slug
+         * from the detail page URL.
          *
          * Example:
-         * /anime/bleach-thousand-year...
+         *
+         * /anime/
+         * bleach-thousand-year-blood-war-the-calamity/
          */
 
         let animeSlug = "";
 
         const animeMatch =
             url.match(
-                /\/anime\/([^\/]+)/
+                /\/anime\/([^\/?#]+)/
             );
 
         if (animeMatch) {
             animeSlug =
                 animeMatch[1];
         }
+
+        /*
+         * Only episode URLs belonging
+         * to this exact anime will be used.
+         */
+
+        const episodePrefix =
+            "/" +
+            animeSlug +
+            "-episode-";
 
         const episodeLinks =
             document.select(
@@ -244,15 +325,80 @@ class DefaultExtension extends MProvider {
 
         for (const element of episodeLinks) {
 
-            const href =
+            let href =
                 element.attr("href");
 
             if (!href) {
                 continue;
             }
 
+            /*
+             * Convert absolute AniDB URLs
+             * into relative paths so the
+             * prefix check works consistently.
+             */
+
+            if (
+                href.startsWith(
+                    this.source.baseUrl
+                )
+            ) {
+
+                href =
+                    href.substring(
+                        this.source.baseUrl.length
+                    );
+            }
+
+            /*
+             * Remove query parameters.
+             */
+
+            href =
+                href.split("?")[0];
+
+            /*
+             * Remove fragments.
+             */
+
+            href =
+                href.split("#")[0];
+
+            /*
+             * Make sure this is an episode
+             * of the current anime.
+             */
+
+            if (
+                !href.startsWith(
+                    episodePrefix
+                )
+            ) {
+                continue;
+            }
+
+            /*
+             * Extract episode number.
+             */
+
+            const numberMatch =
+                href.match(
+                    /-episode-(\d+)/
+                );
+
+            if (!numberMatch) {
+                continue;
+            }
+
+            const episodeNumber =
+                numberMatch[1];
+
             const episodeUrl =
                 this.makeAbsoluteUrl(href);
+
+            /*
+             * Prevent duplicates.
+             */
 
             if (
                 seenEpisodes.has(
@@ -262,88 +408,58 @@ class DefaultExtension extends MProvider {
                 continue;
             }
 
-            /*
-             * Only accept episode links
-             * belonging to THIS anime.
-             *
-             * This prevents things like:
-             * Red River Episode 11
-             * Liar Game Episode 24
-             * etc. from being included.
-             */
-
-            const episodeMatch =
-                episodeUrl.match(
-                    /\/([^\/]+)-episode-(\d+)(?:-[^\/]+)?\/?$/
-                );
-
-            if (!episodeMatch) {
-                continue;
-            }
-
-            const episodeAnimeSlug =
-                episodeMatch[1];
-
-            if (
-                animeSlug &&
-                episodeAnimeSlug !== animeSlug
-            ) {
-                continue;
-            }
-
-            const episodeNumber =
-                episodeMatch[2];
-
-            /*
-             * Build a clean episode name
-             * from the URL instead of taking
-             * the entire nested anchor text.
-             */
-
-            let episodeName =
-                "Episode " +
-                episodeNumber;
-
-            const suffixMatch =
-                episodeUrl.match(
-                    /-episode-\d+-(.+?)(?:\/)?$/
-                );
-
-            if (suffixMatch) {
-
-                const suffix =
-                    suffixMatch[1]
-                        .replace(
-                            /\/$/,
-                            ""
-                        )
-                        .replace(
-                            /-/g,
-                            " "
-                        )
-                        .trim();
-
-                if (suffix) {
-
-                    episodeName =
-                        "Episode " +
-                        episodeNumber +
-                        " " +
-                        suffix;
-                }
-            }
-
             seenEpisodes.add(
                 episodeUrl
             );
 
             episodes.push({
-                name: episodeName,
-                url: episodeUrl,
-                scanlator: "",
-                dateUpload: null
+                name:
+                    "Episode " +
+                    episodeNumber +
+                    " English Subbed",
+
+                url:
+                    episodeUrl,
+
+                scanlator:
+                    "English Subbed",
+
+                dateUpload:
+                    null
             });
         }
+
+        /* -------------------------
+           SORT EPISODES
+           NEWEST FIRST
+        ------------------------- */
+
+        episodes.sort(
+            (a, b) => {
+
+                const aMatch =
+                    a.name.match(/\d+/);
+
+                const bMatch =
+                    b.name.match(/\d+/);
+
+                const aNumber =
+                    aMatch
+                        ? parseInt(aMatch[0])
+                        : 0;
+
+                const bNumber =
+                    bMatch
+                        ? parseInt(bMatch[0])
+                        : 0;
+
+                return bNumber - aNumber;
+            }
+        );
+
+        /* -------------------------
+           RETURN DETAIL
+        ------------------------- */
 
         return {
             url: url,
