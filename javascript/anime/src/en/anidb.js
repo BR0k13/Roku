@@ -127,11 +127,22 @@ class DefaultExtension extends MProvider {
             }
 
             const title =
-                element.text.trim();
+    element.text.trim();
 
-            if (!title) {
-                continue;
-            }
+if (!title) {
+    continue;
+}
+
+/*
+ * Filter out "View All" and similar
+ * non-anime directory links.
+ */
+if (
+    title.toLowerCase().includes("view all") ||
+    title.toLowerCase().includes("view all anime")
+) {
+    continue;
+}
 
             seen.add(url);
 
