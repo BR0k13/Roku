@@ -8,7 +8,7 @@ const mangayomiSources = [
         "typeSource": "single",
         "itemType": 1,
         "isNsfw": false,
-        "version": "0.1.8",
+        "version": "0.1.9",
         "pkgPath": "anime/src/en/anidb.js",
         "notes": "AniDB anime source"
     }
@@ -47,38 +47,69 @@ class DefaultExtension extends MProvider {
 
     async getPopular(page) {
 
-        const pageUrl =
-            page > 1
-                ? this.source.baseUrl + "/?page=" + page
-                : this.source.baseUrl;
+        /*
+         * AniDB's homepage contains the Popular Animes
+         * section, but it also contains other anime links
+         * and a "View All" link.
+         *
+         * AniDB does not behave like a normal paginated
+         * popular source, so always use the homepage and
+         * stop pagination after this result.
+         */
 
         const response =
-            await this.client.get(pageUrl);
+            await this.client.get(
+                this.source.baseUrl
+            );
 
         const document =
             new Document(response.body);
 
+        /*
+         * Get all anime links from the homepage.
+         */
+
         const animeLinks =
-            document.select('a[href*="/anime/"]');
+            document.select(
+                'a[href*="/anime/"]'
+            );
 
         const list = [];
         const seen = new Set();
 
         for (const element of animeLinks) {
 
-            const href =
+            let href =
                 element.attr("href");
 
             if (!href) {
                 continue;
             }
 
-            const url =
-                this.makeAbsoluteUrl(href);
-
             /*
              * Ignore AniDB's "View All" archive link.
              */
+
+            if (
+                href === "/anime/" ||
+                href === "/anime" ||
+                href === this.source.baseUrl + "/anime/" ||
+                href === this.source.baseUrl + "/anime"
+            ) {
+                continue;
+            }
+
+            /*
+             * Make sure this is actually an anime
+             * detail URL.
+             */
+
+            const url =
+                this.makeAbsoluteUrl(href);
+
+            if (!url) {
+                continue;
+            }
 
             if (
                 url === this.source.baseUrl + "/anime/" ||
@@ -86,6 +117,10 @@ class DefaultExtension extends MProvider {
             ) {
                 continue;
             }
+
+            /*
+             * Prevent duplicate anime entries.
+             */
 
             if (seen.has(url)) {
                 continue;
@@ -100,25 +135,97 @@ class DefaultExtension extends MProvider {
 
             seen.add(url);
 
+            /*
+             * AniDB's homepage does not place the
+             * cover image directly inside the anime
+             * title link.
+             *
+             * Fetch the anime detail page to get
+             * the actual cover image.
+             */
+
             let imageUrl = "";
 
-            const image =
-                element.selectFirst("img");
+            try {
 
-            if (image) {
+                const detailResponse =
+                    await this.client.get(url);
 
-                let src =
-                    image.attr("src");
+                const detailDocument =
+                    new Document(
+                        detailResponse.body
+                    );
 
-                if (!src) {
-                    src =
-                        image.attr("data-src");
+                /*
+                 * AniDB uses an image hosted through
+                 * wp.com for the anime cover.
+                 */
+
+                const coverLink =
+                    detailDocument.selectFirst(
+                        'a[href*="wp.com"]'
+                    );
+
+                if (coverLink) {
+
+                    const coverHref =
+                        coverLink.attr("href");
+
+                    if (coverHref) {
+                        imageUrl =
+                            this.makeAbsoluteUrl(
+                                coverHref
+                            );
+                    }
                 }
 
-                if (src) {
-                    imageUrl =
-                        this.makeAbsoluteUrl(src);
+                /*
+                 * Fallback: search all images for
+                 * a wp.com image.
+                 */
+
+                if (!imageUrl) {
+
+                    const images =
+                        detailDocument.select("img");
+
+                    for (const image of images) {
+
+                        let src =
+                            image.attr("src");
+
+                        if (!src) {
+                            src =
+                                image.attr("data-src");
+                        }
+
+                        if (!src) {
+                            continue;
+                        }
+
+                        if (
+                            src.includes("wp.com")
+                        ) {
+
+                            imageUrl =
+                                this.makeAbsoluteUrl(
+                                    src
+                                );
+
+                            break;
+                        }
+                    }
                 }
+
+            } catch (error) {
+
+                /*
+                 * If the cover request fails,
+                 * keep the anime entry instead
+                 * of breaking the whole source.
+                 */
+
+                imageUrl = "";
             }
 
             list.push({
@@ -129,9 +236,17 @@ class DefaultExtension extends MProvider {
             });
         }
 
+        /*
+         * AniDB's homepage is not being treated
+         * as a paginated source.
+         *
+         * This prevents Mangayomi from repeatedly
+         * requesting page 2, 3, 4, etc.
+         */
+
         return {
             list: list,
-            hasNextPage: list.length > 0
+            hasNextPage: false
         };
     }
 
@@ -206,6 +321,7 @@ class DefaultExtension extends MProvider {
                 if (
                     src.includes("wp.com")
                 ) {
+
                     imageUrl =
                         this.makeAbsoluteUrl(src);
 
