@@ -48,15 +48,31 @@ class DefaultExtension extends MProvider {
     async getPopular(page) {
 
         /*
-         * AniDB's homepage contains the Popular Animes
-         * section. We scrape the homepage once and stop
-         * pagination after this result.
+         * AniDB's anime archive is paginated.
+         *   page 1 -> /anime/
+         *   page 2 -> /anime/page/2/
+         *   page 3 -> /anime/page/3/
+         *   ...
+         *
+         * This gives us access to the full catalog
+         * instead of just the few items on the
+         * homepage.
          */
 
+        let url;
+
+        if (page === 1) {
+            url = this.source.baseUrl + "/anime/";
+        } else {
+            url =
+                this.source.baseUrl +
+                "/anime/page/" +
+                page +
+                "/";
+        }
+
         const response =
-            await this.client.get(
-                this.source.baseUrl
-            );
+            await this.client.get(url);
 
         const document =
             new Document(response.body);
@@ -79,37 +95,45 @@ class DefaultExtension extends MProvider {
             }
 
             /*
-             * Ignore AniDB's "View All" archive link.
+             * Strip query strings and fragments so
+             * duplicate detection works properly.
+             */
+
+            const cleanHref =
+                href.split("?")[0].split("#")[0];
+
+            /*
+             * Skip the archive root itself
+             * (e.g. "/anime/" or "/anime").
              */
 
             if (
-                href === "/anime/" ||
-                href === "/anime" ||
-                href === this.source.baseUrl + "/anime/" ||
-                href === this.source.baseUrl + "/anime"
-            ) {
-                continue;
-            }
-
-            const url =
-                this.makeAbsoluteUrl(href);
-
-            if (!url) {
-                continue;
-            }
-
-            if (
-                url === this.source.baseUrl + "/anime/" ||
-                url === this.source.baseUrl + "/anime"
+                /\/anime\/?$/.test(cleanHref)
             ) {
                 continue;
             }
 
             /*
-             * Prevent duplicate anime entries.
+             * Skip pagination links
+             * (e.g. "/anime/page/2/").
              */
 
-            if (seen.has(url)) {
+            if (
+                /\/anime\/page\/\d+\/?$/.test(
+                    cleanHref
+                )
+            ) {
+                continue;
+            }
+
+            const absoluteUrl =
+                this.makeAbsoluteUrl(cleanHref);
+
+            if (!absoluteUrl) {
+                continue;
+            }
+
+            if (seen.has(absoluteUrl)) {
                 continue;
             }
 
@@ -121,31 +145,25 @@ class DefaultExtension extends MProvider {
             }
 
             /*
-             * Filter out "View All" and similar
-             * non-anime directory links.
+             * Ignore nav junk and the "View All"
+             * placeholder.
              */
 
+            if (title.length < 2) {
+                continue;
+            }
+
             if (
-                title.toLowerCase().includes("view all") ||
-                title.toLowerCase().includes("view all anime")
+                title.toLowerCase().includes("view all")
             ) {
                 continue;
             }
 
-            seen.add(url);
+            seen.add(absoluteUrl);
 
             /*
-             * Try to find the cover image from the
-             * same card on the homepage instead of
-             * making a separate request to the
-             * detail page. This keeps the source fast
-             * and avoids rate-limiting.
-             *
-             * NOTE: Mangayomi's DOM wrapper only
-             * supports select/selectFirst on elements,
-             * so we only check inside the link itself.
-             * If no image is found, getDetail() will
-             * provide it later.
+             * Grab the cover image from the card
+             * itself (fast, no extra requests).
              */
 
             let imageUrl = "";
@@ -155,7 +173,7 @@ class DefaultExtension extends MProvider {
 
             if (img) {
 
-                let src =
+                const src =
                     img.attr("src") ||
                     img.attr("data-src");
 
@@ -167,21 +185,58 @@ class DefaultExtension extends MProvider {
 
             list.push({
                 name: title,
-                url: url,
-                link: url,
+                url: absoluteUrl,
+                link: absoluteUrl,
                 imageUrl: imageUrl
             });
         }
 
         /*
-         * AniDB's homepage is not treated as a
-         * paginated source. This prevents Mangayomi
-         * from repeatedly requesting page 2, 3, 4, etc.
+         * Detect whether a next page exists.
+         * We look for any pagination link whose
+         * page number is greater than the current
+         * page, plus the WordPress rel="next"
+         * fallback.
          */
+
+        let hasNextPage = false;
+
+        const pageLinks =
+            document.select(
+                'a[href*="/anime/page/"]'
+            );
+
+        for (const link of pageLinks) {
+
+            const href =
+                link.attr("href") || "";
+
+            const match =
+                href.match(
+                    /\/anime\/page\/(\d+)\/?$/
+                );
+
+            if (
+                match &&
+                parseInt(match[1], 10) > page
+            ) {
+                hasNextPage = true;
+                break;
+            }
+        }
+
+        if (
+            !hasNextPage &&
+            document.selectFirst(
+                'link[rel="next"]'
+            )
+        ) {
+            hasNextPage = true;
+        }
 
         return {
             list: list,
-            hasNextPage: false
+            hasNextPage: hasNextPage
         };
     }
 
