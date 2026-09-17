@@ -415,8 +415,7 @@ class DefaultExtension extends MProvider {
             episodes.push({
                 name:
                     "Episode " +
-                    episodeNumber +
-                    " English Subbed",
+                    episodeNumber,
 
                 url:
                     episodeUrl,
