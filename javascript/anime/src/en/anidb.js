@@ -8,7 +8,7 @@ const mangayomiSources = [
         "typeSource": "single",
         "itemType": 1,
         "isNsfw": false,
-        "version": "0.2.1",
+        "version": "0.2.2",
         "pkgPath": "anime/src/en/anidb.js",
         "notes": "AniDB anime source"
     }
@@ -140,17 +140,21 @@ class DefaultExtension extends MProvider {
              * making a separate request to the
              * detail page. This keeps the source fast
              * and avoids rate-limiting.
+             *
+             * NOTE: Mangayomi's DOM wrapper only
+             * supports select/selectFirst on elements,
+             * so we only check inside the link itself.
+             * If no image is found, getDetail() will
+             * provide it later.
              */
 
             let imageUrl = "";
 
-            /*
-             * 1. Check if the link itself contains an img.
-             */
-
-            let img = element.selectFirst("img");
+            const img =
+                element.selectFirst("img");
 
             if (img) {
+
                 let src =
                     img.attr("src") ||
                     img.attr("data-src");
@@ -160,67 +164,6 @@ class DefaultExtension extends MProvider {
                         this.makeAbsoluteUrl(src);
                 }
             }
-
-            /*
-             * 2. Otherwise look inside the parent container.
-             */
-
-            if (!imageUrl) {
-
-                const parent =
-                    element.parent();
-
-                if (parent) {
-
-                    img = parent.selectFirst("img");
-
-                    if (img) {
-
-                        let src =
-                            img.attr("src") ||
-                            img.attr("data-src");
-
-                        if (src) {
-                            imageUrl =
-                                this.makeAbsoluteUrl(src);
-                        }
-                    }
-                }
-            }
-
-            /*
-             * 3. Fallback: check sibling elements.
-             */
-
-            if (!imageUrl) {
-
-                const siblings =
-                    element.siblings();
-
-                for (const sib of siblings) {
-
-                    img = sib.selectFirst("img");
-
-                    if (img) {
-
-                        let src =
-                            img.attr("src") ||
-                            img.attr("data-src");
-
-                        if (src) {
-                            imageUrl =
-                                this.makeAbsoluteUrl(src);
-                            break;
-                        }
-                    }
-                }
-            }
-
-            /*
-             * If we still could not find the image,
-             * leave it empty. getDetail() will fetch
-             * it when the user opens the anime.
-             */
 
             list.push({
                 name: title,
