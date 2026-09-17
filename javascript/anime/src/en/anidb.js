@@ -47,52 +47,60 @@ class DefaultExtension extends MProvider {
 
     async getPopular(page) {
 
-        const pageUrl =
-            page > 1
-                ? this.source.baseUrl + "/?page=" + page
-                : this.source.baseUrl;
+    const pageUrl =
+        page > 1
+            ? this.source.baseUrl + "/?page=" + page
+            : this.source.baseUrl;
 
-        const response =
-            await this.client.get(pageUrl);
+    const response =
+        await this.client.get(pageUrl);
 
-        const document =
-            new Document(response.body);
+    const document =
+        new Document(response.body);
 
-        const animeLinks =
-            document.select('a[href*="/anime/"]');
+    const animeLinks =
+        document.select('a[href*="/anime/"]');
 
-        const list = [];
-        const seen = new Set();
+    const list = [];
+    const seen = new Set();
 
-        for (const element of animeLinks) {
+    for (const element of animeLinks) {
 
-            const href =
-                element.attr("href");
+        const href =
+            element.attr("href");
 
-            if (!href) {
-                continue;
-            }
+        if (!href) {
+            continue;
+        }
 
-            const url =
-                this.makeAbsoluteUrl(href);
+        const url =
+            this.makeAbsoluteUrl(href);
 
-            if (seen.has(url)) {
-                continue;
-            }
+        if (seen.has(url)) {
+            continue;
+        }
 
-            const title =
-                element.text.trim();
+        const title =
+            element.text.trim();
 
-            if (!title) {
-                continue;
-            }
+        if (!title) {
+            continue;
+        }
 
-            seen.add(url);
+        seen.add(url);
 
-            let imageUrl = "";
+        let imageUrl = "";
+
+        try {
+
+            const detailResponse =
+                await this.client.get(url);
+
+            const detailDocument =
+                new Document(detailResponse.body);
 
             const image =
-                element.selectFirst("img");
+                detailDocument.selectFirst("img");
 
             if (image) {
 
@@ -110,18 +118,21 @@ class DefaultExtension extends MProvider {
                 }
             }
 
-            list.push({
-                name: title,
-                url: url,
-                link: url,
-                imageUrl: imageUrl
-            });
+        } catch (error) {
+
+            imageUrl = "";
         }
 
-        return {
-            list: list,
-            hasNextPage: list.length > 0
-        };
+        list.push({
+            name: title,
+            url: url,
+            link: url,
+            imageUrl: imageUrl
+        });
     }
 
+    return {
+        list: list,
+        hasNextPage: list.length > 0
+    };
 }
