@@ -8,7 +8,7 @@ const mangayomiSources = [
         "typeSource": "single",
         "itemType": 1,
         "isNsfw": false,
-        "version": "0.2.0",
+        "version": "0.2.1",
         "pkgPath": "anime/src/en/anidb.js",
         "notes": "AniDB anime source"
     }
@@ -49,12 +49,8 @@ class DefaultExtension extends MProvider {
 
         /*
          * AniDB's homepage contains the Popular Animes
-         * section, but it also contains other anime links
-         * and a "View All" link.
-         *
-         * AniDB does not behave like a normal paginated
-         * popular source, so always use the homepage and
-         * stop pagination after this result.
+         * section. We scrape the homepage once and stop
+         * pagination after this result.
          */
 
         const response =
@@ -64,10 +60,6 @@ class DefaultExtension extends MProvider {
 
         const document =
             new Document(response.body);
-
-        /*
-         * Get all anime links from the homepage.
-         */
 
         const animeLinks =
             document.select(
@@ -99,11 +91,6 @@ class DefaultExtension extends MProvider {
                 continue;
             }
 
-            /*
-             * Make sure this is actually an anime
-             * detail URL.
-             */
-
             const url =
                 this.makeAbsoluteUrl(href);
 
@@ -127,117 +114,113 @@ class DefaultExtension extends MProvider {
             }
 
             const title =
-    element.text.trim();
+                element.text.trim();
 
-if (!title) {
-    continue;
-}
+            if (!title) {
+                continue;
+            }
 
-/*
- * Filter out "View All" and similar
- * non-anime directory links.
- */
-if (
-    title.toLowerCase().includes("view all") ||
-    title.toLowerCase().includes("view all anime")
-) {
-    continue;
-}
+            /*
+             * Filter out "View All" and similar
+             * non-anime directory links.
+             */
+
+            if (
+                title.toLowerCase().includes("view all") ||
+                title.toLowerCase().includes("view all anime")
+            ) {
+                continue;
+            }
 
             seen.add(url);
 
             /*
-             * AniDB's homepage does not place the
-             * cover image directly inside the anime
-             * title link.
-             *
-             * Fetch the anime detail page to get
-             * the actual cover image.
+             * Try to find the cover image from the
+             * same card on the homepage instead of
+             * making a separate request to the
+             * detail page. This keeps the source fast
+             * and avoids rate-limiting.
              */
 
             let imageUrl = "";
 
-            try {
+            /*
+             * 1. Check if the link itself contains an img.
+             */
 
-                const detailResponse =
-                    await this.client.get(url);
+            let img = element.selectFirst("img");
 
-                const detailDocument =
-                    new Document(
-                        detailResponse.body
-                    );
+            if (img) {
+                let src =
+                    img.attr("src") ||
+                    img.attr("data-src");
 
-                /*
-                 * AniDB uses an image hosted through
-                 * wp.com for the anime cover.
-                 */
-
-                const coverLink =
-                    detailDocument.selectFirst(
-                        'a[href*="wp.com"]'
-                    );
-
-                if (coverLink) {
-
-                    const coverHref =
-                        coverLink.attr("href");
-
-                    if (coverHref) {
-                        imageUrl =
-                            this.makeAbsoluteUrl(
-                                coverHref
-                            );
-                    }
+                if (src) {
+                    imageUrl =
+                        this.makeAbsoluteUrl(src);
                 }
+            }
 
-                /*
-                 * Fallback: search all images for
-                 * a wp.com image.
-                 */
+            /*
+             * 2. Otherwise look inside the parent container.
+             */
 
-                if (!imageUrl) {
+            if (!imageUrl) {
 
-                    const images =
-                        detailDocument.select("img");
+                const parent =
+                    element.parent();
 
-                    for (const image of images) {
+                if (parent) {
+
+                    img = parent.selectFirst("img");
+
+                    if (img) {
 
                         let src =
-                            image.attr("src");
+                            img.attr("src") ||
+                            img.attr("data-src");
 
-                        if (!src) {
-                            src =
-                                image.attr("data-src");
-                        }
-
-                        if (!src) {
-                            continue;
-                        }
-
-                        if (
-                            src.includes("wp.com")
-                        ) {
-
+                        if (src) {
                             imageUrl =
-                                this.makeAbsoluteUrl(
-                                    src
-                                );
+                                this.makeAbsoluteUrl(src);
+                        }
+                    }
+                }
+            }
 
+            /*
+             * 3. Fallback: check sibling elements.
+             */
+
+            if (!imageUrl) {
+
+                const siblings =
+                    element.siblings();
+
+                for (const sib of siblings) {
+
+                    img = sib.selectFirst("img");
+
+                    if (img) {
+
+                        let src =
+                            img.attr("src") ||
+                            img.attr("data-src");
+
+                        if (src) {
+                            imageUrl =
+                                this.makeAbsoluteUrl(src);
                             break;
                         }
                     }
                 }
-
-            } catch (error) {
-
-                /*
-                 * If the cover request fails,
-                 * keep the anime entry instead
-                 * of breaking the whole source.
-                 */
-
-                imageUrl = "";
             }
+
+            /*
+             * If we still could not find the image,
+             * leave it empty. getDetail() will fetch
+             * it when the user opens the anime.
+             */
 
             list.push({
                 name: title,
@@ -248,11 +231,9 @@ if (
         }
 
         /*
-         * AniDB's homepage is not being treated
-         * as a paginated source.
-         *
-         * This prevents Mangayomi from repeatedly
-         * requesting page 2, 3, 4, etc.
+         * AniDB's homepage is not treated as a
+         * paginated source. This prevents Mangayomi
+         * from repeatedly requesting page 2, 3, 4, etc.
          */
 
         return {
@@ -427,11 +408,6 @@ if (
         /*
          * Get the exact anime slug
          * from the detail page URL.
-         *
-         * Example:
-         *
-         * /anime/
-         * bleach-thousand-year-blood-war-the-calamity/
          */
 
         let animeSlug = "";
