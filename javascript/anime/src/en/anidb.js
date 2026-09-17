@@ -75,26 +75,17 @@ class DefaultExtension extends MProvider {
 
             const url =
                 this.makeAbsoluteUrl(href);
-            const href =
-    element.attr("href");
 
-if (!href) {
-    continue;
-}
+            /*
+             * Ignore AniDB's "View All" archive link.
+             */
 
-const url =
-    this.makeAbsoluteUrl(href);
-
-/*
- * Ignore AniDB's "View All" archive link.
- */
-
-if (
-    url === this.source.baseUrl + "/anime/" ||
-    url === this.source.baseUrl + "/anime"
-) {
-    continue;
-}
+            if (
+                url === this.source.baseUrl + "/anime/" ||
+                url === this.source.baseUrl + "/anime"
+            ) {
+                continue;
+            }
 
             if (seen.has(url)) {
                 continue;
