@@ -5,7 +5,7 @@
     "baseUrl": "https://anidb.se",
     "lang": "en",
     "typeSource": "single",
-    "iconUrl": "https://anidb.se/favicon.ico",
+    "iconUrl": "https://raw.githubusercontent.com/BR0k13/Roku/main/images/icons/anidb.png",
     "dateFormat": "",
     "dateFormatLocale": "",
     "isNsfw": false,
