@@ -8,7 +8,7 @@ const mangayomiSources = [
         "typeSource": "single",
         "itemType": 1,
         "isNsfw": false,
-        "version": "0.1.4",
+        "version": "0.1.5",
         "pkgPath": "anime/src/en/anidb.js",
         "notes": "AniDB anime source"
     }
@@ -132,6 +132,10 @@ class DefaultExtension extends MProvider {
         const document =
             new Document(response.body);
 
+        /* -------------------------
+           TITLE
+        ------------------------- */
+
         let title = "";
 
         const titleElement =
@@ -142,47 +146,47 @@ class DefaultExtension extends MProvider {
                 titleElement.text.trim();
         }
 
+        /* -------------------------
+           COVER
+        ------------------------- */
+
         let imageUrl = "";
 
-        const image =
-            document.selectFirst("img");
+        const coverLink =
+            document.selectFirst(
+                'a[href*="wp.com"]'
+            );
 
-        if (image) {
+        if (coverLink) {
 
-            let src =
-                image.attr("src");
+            const href =
+                coverLink.attr("href");
 
-            if (!src) {
-                src =
-                    image.attr("data-src");
-            }
-
-            if (src) {
+            if (href) {
                 imageUrl =
-                    this.makeAbsoluteUrl(src);
+                    this.makeAbsoluteUrl(href);
             }
         }
+
+        /* -------------------------
+           SYNOPSIS
+        ------------------------- */
 
         let description = "";
 
-        const descriptionElements =
-            document.select(
-                "p"
+        const synopsis =
+            document.selectFirst(
+                "h2 + p"
             );
 
-        for (const element of descriptionElements) {
-
-            const text =
-                element.text.trim();
-
-            if (
-                text &&
-                text.length > 50
-            ) {
-                description = text;
-                break;
-            }
+        if (synopsis) {
+            description =
+                synopsis.text.trim();
         }
+
+        /* -------------------------
+           GENRES
+        ------------------------- */
 
         const genres = [];
 
@@ -204,15 +208,39 @@ class DefaultExtension extends MProvider {
             }
         }
 
+        /* -------------------------
+           EPISODES
+        ------------------------- */
+
         const episodes = [];
+
+        const seenEpisodes =
+            new Set();
+
+        /*
+         * Get the anime slug from the
+         * current detail URL.
+         *
+         * Example:
+         * /anime/bleach-thousand-year...
+         */
+
+        let animeSlug = "";
+
+        const animeMatch =
+            url.match(
+                /\/anime\/([^\/]+)/
+            );
+
+        if (animeMatch) {
+            animeSlug =
+                animeMatch[1];
+        }
 
         const episodeLinks =
             document.select(
                 'a[href*="-episode-"]'
             );
-
-        const seenEpisodes =
-            new Set();
 
         for (const element of episodeLinks) {
 
@@ -234,11 +262,75 @@ class DefaultExtension extends MProvider {
                 continue;
             }
 
-            const episodeName =
-                element.text.trim();
+            /*
+             * Only accept episode links
+             * belonging to THIS anime.
+             *
+             * This prevents things like:
+             * Red River Episode 11
+             * Liar Game Episode 24
+             * etc. from being included.
+             */
 
-            if (!episodeName) {
+            const episodeMatch =
+                episodeUrl.match(
+                    /\/([^\/]+)-episode-(\d+)(?:-[^\/]+)?\/?$/
+                );
+
+            if (!episodeMatch) {
                 continue;
+            }
+
+            const episodeAnimeSlug =
+                episodeMatch[1];
+
+            if (
+                animeSlug &&
+                episodeAnimeSlug !== animeSlug
+            ) {
+                continue;
+            }
+
+            const episodeNumber =
+                episodeMatch[2];
+
+            /*
+             * Build a clean episode name
+             * from the URL instead of taking
+             * the entire nested anchor text.
+             */
+
+            let episodeName =
+                "Episode " +
+                episodeNumber;
+
+            const suffixMatch =
+                episodeUrl.match(
+                    /-episode-\d+-(.+?)(?:\/)?$/
+                );
+
+            if (suffixMatch) {
+
+                const suffix =
+                    suffixMatch[1]
+                        .replace(
+                            /\/$/,
+                            ""
+                        )
+                        .replace(
+                            /-/g,
+                            " "
+                        )
+                        .trim();
+
+                if (suffix) {
+
+                    episodeName =
+                        "Episode " +
+                        episodeNumber +
+                        " " +
+                        suffix;
+                }
             }
 
             seenEpisodes.add(
@@ -260,7 +352,7 @@ class DefaultExtension extends MProvider {
             description: description,
             author: "",
             genre: genres,
-            status: 5,
+            status: 0,
             episodes: episodes
         };
     }
