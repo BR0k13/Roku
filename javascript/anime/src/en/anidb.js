@@ -123,5 +123,106 @@ class DefaultExtension extends MProvider {
             hasNextPage: list.length > 0
         };
     }
+    
+    async getDetail(url) {
 
+        const response =
+            await this.client.get(url);
+
+        const document =
+            new Document(response.body);
+
+        let title = "";
+
+        const titleElement =
+            document.selectFirst("h1");
+
+        if (titleElement) {
+            title = titleElement.text.trim();
+        }
+
+        let description = "";
+
+        const descriptionElement =
+            document.selectFirst(
+                '[class*="description"], [class*="synopsis"]'
+            );
+
+        if (descriptionElement) {
+            description =
+                descriptionElement.text.trim();
+        }
+
+        const genres = [];
+
+        const genreElements =
+            document.select(
+                'a[href*="genre"], a[href*="genres"]'
+            );
+
+        for (const element of genreElements) {
+
+            const genre =
+                element.text.trim();
+
+            if (
+                genre &&
+                !genres.includes(genre)
+            ) {
+                genres.push(genre);
+            }
+        }
+
+        const episodes = [];
+
+        const episodeLinks =
+            document.select(
+                'a[href*="/episode"]'
+            );
+
+        const seenEpisodes = new Set();
+
+        for (const element of episodeLinks) {
+
+            const href =
+                element.attr("href");
+
+            if (!href) {
+                continue;
+            }
+
+            const episodeUrl =
+                this.makeAbsoluteUrl(href);
+
+            if (seenEpisodes.has(episodeUrl)) {
+                continue;
+            }
+
+            const episodeName =
+                element.text.trim();
+
+            if (!episodeName) {
+                continue;
+            }
+
+            seenEpisodes.add(episodeUrl);
+
+            episodes.push({
+                name: episodeName,
+                url: episodeUrl,
+                scanlator: "",
+                dateUpload: null
+            });
+        }
+
+        return {
+            url: url,
+            title: title,
+            description: description,
+            author: "",
+            genre: genres,
+            status: 5,
+            episodes: episodes
+        };
+    }
 }
