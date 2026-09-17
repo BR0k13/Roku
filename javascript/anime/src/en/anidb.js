@@ -4,7 +4,7 @@ const mangayomiSources = [
         "lang": "en",
         "baseUrl": "https://anidb.se",
         "apiUrl": "",
-        "iconUrl": "https://anidb.se/favicon.ico",
+        "iconUrl": "https://raw.githubusercontent.com/BR0k13/Roku/main/images/icons/anidb.png",
         "typeSource": "single",
         "itemType": 1,
         "isNsfw": false,
