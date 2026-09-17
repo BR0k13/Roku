@@ -8,7 +8,7 @@ const mangayomiSources = [
         "typeSource": "single",
         "itemType": 1,
         "isNsfw": false,
-        "version": "0.1.3",
+        "version": "0.1.4",
         "pkgPath": "anime/src/en/anidb.js",
         "notes": "AniDB anime source"
     }
@@ -165,17 +165,22 @@ class DefaultExtension extends MProvider {
 
         let description = "";
 
-        const synopsisHeading =
-            document.selectFirst("h2");
+        const descriptionElements =
+            document.select(
+                "p"
+            );
 
-        if (synopsisHeading) {
+        for (const element of descriptionElements) {
 
-            const parent =
-                synopsisHeading.parent();
+            const text =
+                element.text.trim();
 
-            if (parent) {
-                description =
-                    parent.text.trim();
+            if (
+                text &&
+                text.length > 50
+            ) {
+                description = text;
+                break;
             }
         }
 
