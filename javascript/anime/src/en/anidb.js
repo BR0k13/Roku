@@ -8,7 +8,7 @@ const mangayomiSources = [
         "typeSource": "single",
         "itemType": 1,
         "isNsfw": false,
-        "version": "0.1.7",
+        "version": "0.1.8",
         "pkgPath": "anime/src/en/anidb.js",
         "notes": "AniDB anime source"
     }
@@ -75,6 +75,26 @@ class DefaultExtension extends MProvider {
 
             const url =
                 this.makeAbsoluteUrl(href);
+            const href =
+    element.attr("href");
+
+if (!href) {
+    continue;
+}
+
+const url =
+    this.makeAbsoluteUrl(href);
+
+/*
+ * Ignore AniDB's "View All" archive link.
+ */
+
+if (
+    url === this.source.baseUrl + "/anime/" ||
+    url === this.source.baseUrl + "/anime"
+) {
+    continue;
+}
 
             if (seen.has(url)) {
                 continue;
