@@ -8,7 +8,7 @@ const mangayomiSources = [
         "typeSource": "single",
         "itemType": 1,
         "isNsfw": false,
-        "version": "0.2.4",
+        "version": "0.2.5",
         "pkgPath": "anime/src/en/anidb.js",
         "notes": "AniDB anime source"
     }
@@ -46,15 +46,41 @@ class DefaultExtension extends MProvider {
     }
 
     /*
+     * Normalize a URL for duplicate detection.
+     * Strips the query string, fragments, and any
+     * trailing slash so that "/anime/bleach/" and
+     * "/anime/bleach" collapse into the same key.
+     */
+    normalizeUrl(url) {
+
+        if (!url) {
+            return "";
+        }
+
+        let normalized =
+            url.split("?")[0].split("#")[0];
+
+        /*
+         * Collapse trailing slashes.
+         */
+        normalized =
+            normalized.replace(/\/+$/, "");
+
+        /*
+         * Lowercase for case-insensitive comparison.
+         */
+        normalized =
+            normalized.toLowerCase();
+
+        return normalized;
+    }
+
+    /*
      * Try to extract a clean anime title from a
      * card link. Handles the common WordPress
      * anime-theme markup variants.
      */
     extractTitle(element) {
-
-        /*
-         * Preferred: a dedicated title container.
-         */
 
         const titleSelectors = [
             ".tt",
@@ -83,12 +109,6 @@ class DefaultExtension extends MProvider {
             }
         }
 
-        /*
-         * Fallback: use the raw text but strip the
-         * type badge (TV / ONA / OVA / Movie /
-         * Special) from the beginning.
-         */
-
         let text =
             element.text.trim();
 
@@ -103,13 +123,6 @@ class DefaultExtension extends MProvider {
     }
 
     async getPopular(page) {
-
-        /*
-         * AniDB's anime archive is paginated.
-         *   page 1 -> /anime/
-         *   page 2 -> /anime/page/2/
-         *   page 3 -> /anime/page/3/
-         */
 
         let url;
 
@@ -135,7 +148,8 @@ class DefaultExtension extends MProvider {
             );
 
         const list = [];
-        const seen = new Set();
+        const seenUrls = new Set();
+        const seenTitles = new Set();
 
         for (const element of animeLinks) {
 
@@ -174,8 +188,7 @@ class DefaultExtension extends MProvider {
             /*
              * Only accept links that contain an
              * <img> — these are the real anime
-             * cards. Nav links and badge links
-             * won't have an image inside.
+             * cards.
              */
 
             const img =
@@ -192,7 +205,16 @@ class DefaultExtension extends MProvider {
                 continue;
             }
 
-            if (seen.has(absoluteUrl)) {
+            /*
+             * Normalize before deduping so that
+             * "/anime/bleach/" and "/anime/bleach"
+             * are treated as the same entry.
+             */
+
+            const urlKey =
+                this.normalizeUrl(absoluteUrl);
+
+            if (seenUrls.has(urlKey)) {
                 continue;
             }
 
@@ -209,7 +231,22 @@ class DefaultExtension extends MProvider {
                 continue;
             }
 
-            seen.add(absoluteUrl);
+            /*
+             * Secondary dedupe by title (catches
+             * cases where two different URLs point
+             * to the same anime, e.g. a featured
+             * widget linking to a variant path).
+             */
+
+            const titleKey =
+                title.toLowerCase().trim();
+
+            if (seenTitles.has(titleKey)) {
+                continue;
+            }
+
+            seenUrls.add(urlKey);
+            seenTitles.add(titleKey);
 
             let imageUrl = "";
 
@@ -229,10 +266,6 @@ class DefaultExtension extends MProvider {
                 imageUrl: imageUrl
             });
         }
-
-        /*
-         * Detect whether a next page exists.
-         */
 
         let hasNextPage = false;
 
