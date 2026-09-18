@@ -8,7 +8,7 @@ const mangayomiSources = [
         "typeSource": "single",
         "itemType": 1,
         "isNsfw": false,
-        "version": "0.2.6",
+        "version": "0.2.7",
         "pkgPath": "anime/src/en/anidb.js",
         "notes": "AniDB anime source"
     }
@@ -19,6 +19,17 @@ class DefaultExtension extends MProvider {
     constructor() {
         super();
         this.client = new Client();
+
+        /*
+         * Persistent dedupe sets that survive
+         * across getPopular(page) calls so we
+         * can filter out items that appeared on
+         * a previous page. Reset when page === 1
+         * (a fresh load / reload).
+         */
+
+        this._seenUrls = new Set();
+        this._seenTitles = new Set();
     }
 
     makeAbsoluteUrl(url) {
@@ -63,15 +74,6 @@ class DefaultExtension extends MProvider {
         return normalized;
     }
 
-    /*
-     * Extracts a clean anime title from a card link.
-     *
-     * Order of preference:
-     *   1. <img alt="...">      (cleanest source)
-     *   2. a[title="..."]       (tooltip attribute)
-     *   3. Common title selectors (.tt, .title, h2, ...)
-     *   4. Raw text with type badge + doubling stripped
-     */
     extractTitle(element) {
 
         const img =
@@ -131,11 +133,6 @@ class DefaultExtension extends MProvider {
             )
             .trim();
 
-        /*
-         * Collapse doubled strings like
-         * "Black TorchBlack Torch" -> "Black Torch".
-         */
-
         if (
             text.length >= 2 &&
             text.length % 2 === 0
@@ -155,11 +152,6 @@ class DefaultExtension extends MProvider {
         return text;
     }
 
-    /*
-     * Extracts an image URL from an <img>, trying
-     * common lazy-load attributes and skipping
-     * placeholder "data:" URIs.
-     */
     extractImage(element) {
 
         const img =
@@ -193,10 +185,6 @@ class DefaultExtension extends MProvider {
         return "";
     }
 
-    /*
-     * Detects UI junk links that happen to contain
-     * an <img> (e.g. "Text Mode" toggle).
-     */
     isUiJunk(title) {
 
         const t =
@@ -223,6 +211,30 @@ class DefaultExtension extends MProvider {
 
     async getPopular(page) {
 
+        /*
+         * Reset the persistent dedupe sets when
+         * starting a fresh load (page 1). This
+         * prevents stale data from a previous
+         * session from blocking results.
+         *
+         * Also defensively re-create the sets if
+         * the constructor wasn't called for some
+         * reason.
+         */
+
+        if (page === 1) {
+            this._seenUrls = new Set();
+            this._seenTitles = new Set();
+        }
+
+        if (!this._seenUrls) {
+            this._seenUrls = new Set();
+        }
+
+        if (!this._seenTitles) {
+            this._seenTitles = new Set();
+        }
+
         let url;
 
         if (page === 1) {
@@ -247,8 +259,15 @@ class DefaultExtension extends MProvider {
             );
 
         const list = [];
-        const seenUrls = new Set();
-        const seenTitles = new Set();
+
+        /*
+         * Count how many *new* items this page
+         * contributed. If it's zero on page 2+,
+         * the site is just repeating content and
+         * we should stop paginating.
+         */
+
+        let newCount = 0;
 
         for (const element of animeLinks) {
 
@@ -293,7 +312,7 @@ class DefaultExtension extends MProvider {
             const urlKey =
                 this.normalizeUrl(absoluteUrl);
 
-            if (seenUrls.has(urlKey)) {
+            if (this._seenUrls.has(urlKey)) {
                 continue;
             }
 
@@ -311,12 +330,13 @@ class DefaultExtension extends MProvider {
             const titleKey =
                 title.toLowerCase().trim();
 
-            if (seenTitles.has(titleKey)) {
+            if (this._seenTitles.has(titleKey)) {
                 continue;
             }
 
-            seenUrls.add(urlKey);
-            seenTitles.add(titleKey);
+            this._seenUrls.add(urlKey);
+            this._seenTitles.add(titleKey);
+            newCount++;
 
             const imageUrl =
                 this.extractImage(element);
@@ -329,39 +349,48 @@ class DefaultExtension extends MProvider {
             });
         }
 
+        /*
+         * Only advertise a next page if this page
+         * actually contributed something new. If
+         * a page is all duplicates, we stop.
+         */
+
         let hasNextPage = false;
 
-        const pageLinks =
-            document.select(
-                'a[href*="/anime/page/"]'
-            );
+        if (newCount > 0) {
 
-        for (const link of pageLinks) {
-
-            const href =
-                link.attr("href") || "";
-
-            const match =
-                href.match(
-                    /\/anime\/page\/(\d+)\/?$/
+            const pageLinks =
+                document.select(
+                    'a[href*="/anime/page/"]'
                 );
 
+            for (const link of pageLinks) {
+
+                const href =
+                    link.attr("href") || "";
+
+                const match =
+                    href.match(
+                        /\/anime\/page\/(\d+)\/?$/
+                    );
+
+                if (
+                    match &&
+                    parseInt(match[1], 10) > page
+                ) {
+                    hasNextPage = true;
+                    break;
+                }
+            }
+
             if (
-                match &&
-                parseInt(match[1], 10) > page
+                !hasNextPage &&
+                document.selectFirst(
+                    'link[rel="next"]'
+                )
             ) {
                 hasNextPage = true;
-                break;
             }
-        }
-
-        if (
-            !hasNextPage &&
-            document.selectFirst(
-                'link[rel="next"]'
-            )
-        ) {
-            hasNextPage = true;
         }
 
         return {
