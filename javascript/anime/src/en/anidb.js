@@ -8,7 +8,7 @@ const mangayomiSources = [
         "typeSource": "single",
         "itemType": 1,
         "isNsfw": false,
-        "version": "0.3.1",
+        "version": "0.3.2",
         "pkgPath": "anime/src/en/anidb.js",
         "notes": "AniDB anime source"
     }
@@ -205,12 +205,6 @@ class DefaultExtension extends MProvider {
         const list = [];
         let newCount = 0;
 
-        /*
-         * Normalize the search filter once so we
-         * don't repeat the .toLowerCase() call
-         * inside the loop.
-         */
-
         const filterLower =
             titleFilter
                 ? titleFilter.toLowerCase().trim()
@@ -273,11 +267,6 @@ class DefaultExtension extends MProvider {
             if (this.isUiJunk(title)) {
                 continue;
             }
-
-            /*
-             * Client-side search filter: only keep
-             * titles that actually contain the query.
-             */
 
             if (filterLower) {
 
@@ -456,15 +445,6 @@ class DefaultExtension extends MProvider {
         };
     }
 
-    /*
-     * Search.
-     *
-     * The theme ignores "?s=" alone, so we add
-     * "&post_type=anime" to force it to return
-     * anime posts only. Then we filter the
-     * results client-side by title match as a
-     * safety net, so unrelated anime are dropped.
-     */
     async search(query, page, filters) {
 
         if (page === 1) {
@@ -504,11 +484,6 @@ class DefaultExtension extends MProvider {
                 'a[href*="/anime/"]'
             );
 
-        /*
-         * Pass the query as the title filter so
-         * only matching anime survive.
-         */
-
         const result =
             this.buildList(animeLinks, query);
 
@@ -547,9 +522,6 @@ class DefaultExtension extends MProvider {
         };
     }
 
-    /*
-     * Alias for older builds that call getSearch.
-     */
     async getSearch(query, page, filters) {
         return await this.search(
             query,
@@ -823,4 +795,131 @@ class DefaultExtension extends MProvider {
         };
     }
 
-}
+    /*
+     * getVideoList(url)
+     *
+     * Fetches the episode page and extracts a
+     * playable video URL.
+     *
+     * Strategy:
+     *   1. Find any <iframe> on the episode page.
+     *   2. If the iframe points directly at an
+     *      .mp4 / .m3u8, use it.
+     *   3. Otherwise, fetch the iframe page and
+     *      scan its HTML + scripts for the real
+     *      stream URL.
+     */
+    async getVideoList(url) {
+
+        const response =
+            await this.client.get(url);
+
+        const document =
+            new Document(response.body);
+
+        /*
+         * Step 1: Collect every iframe on the page
+         * (many players expose multiple server
+         * options).
+         */
+
+        const iframes =
+            document.select("iframe");
+
+        if (iframes.length === 0) {
+            return [];
+        }
+
+        const videos = [];
+        const seenVideoUrls = new Set();
+
+        for (const iframe of iframes) {
+
+            /*
+             * Try common lazy-load attributes
+             * first, then fall back to src.
+             */
+
+            let iframeUrl =
+                iframe.attr("data-src") ||
+                iframe.attr("data-lazy-src") ||
+                iframe.attr("data-litespeed-src") ||
+                iframe.attr("src") ||
+                "";
+
+            iframeUrl = iframeUrl.trim();
+
+            if (
+                !iframeUrl ||
+                iframeUrl === "about:blank" ||
+                iframeUrl.startsWith("data:")
+            ) {
+                continue;
+            }
+
+            iframeUrl =
+                this.makeAbsoluteUrl(iframeUrl);
+
+            /*
+             * Direct video file: use it as-is.
+             */
+
+            if (
+                iframeUrl.includes(".m3u8") ||
+                iframeUrl.includes(".mp4")
+            ) {
+
+                if (!seenVideoUrls.has(iframeUrl)) {
+                    seenVideoUrls.add(iframeUrl);
+
+                    videos.push({
+                        url: iframeUrl,
+                        originalUrl: iframeUrl,
+                        quality: "default",
+                        headers: {
+                            "Referer": this.source.baseUrl,
+                            "User-Agent":
+                                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                        }
+                    });
+                }
+
+                continue;
+            }
+
+            /*
+             * Step 2: Fetch the iframe page and look
+             * for the real stream URL.
+             */
+
+            try {
+
+                const iframeResponse =
+                    await this.client.get(
+                        iframeUrl
+                    );
+
+                const iframeHtml =
+                    iframeResponse.body;
+
+                let videoUrl =
+                    this.extractVideoUrlFromHtml(
+                        iframeHtml
+                    );
+
+                if (!videoUrl) {
+                    continue;
+                }
+
+                videoUrl =
+                    this.makeAbsoluteUrl(videoUrl);
+
+                if (seenVideoUrls.has(videoUrl)) {
+                    continue;
+                }
+
+                seenVideoUrls.add(videoUrl);
+
+                videos.push({
+                    url: videoUrl,
+                    
