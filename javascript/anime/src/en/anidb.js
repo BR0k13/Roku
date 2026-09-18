@@ -8,7 +8,7 @@ const mangayomiSources = [
         "typeSource": "single",
         "itemType": 1,
         "isNsfw": false,
-        "version": "0.2.3",
+        "version": "0.2.4",
         "pkgPath": "anime/src/en/anidb.js",
         "notes": "AniDB anime source"
     }
@@ -45,6 +45,63 @@ class DefaultExtension extends MProvider {
         return this.source.baseUrl + "/" + url;
     }
 
+    /*
+     * Try to extract a clean anime title from a
+     * card link. Handles the common WordPress
+     * anime-theme markup variants.
+     */
+    extractTitle(element) {
+
+        /*
+         * Preferred: a dedicated title container.
+         */
+
+        const titleSelectors = [
+            ".tt",
+            ".title",
+            ".entry-title",
+            ".anime-title",
+            ".name",
+            "h2",
+            "h3",
+            "h4"
+        ];
+
+        for (const sel of titleSelectors) {
+
+            const el =
+                element.selectFirst(sel);
+
+            if (el) {
+
+                const t =
+                    el.text.trim();
+
+                if (t) {
+                    return t;
+                }
+            }
+        }
+
+        /*
+         * Fallback: use the raw text but strip the
+         * type badge (TV / ONA / OVA / Movie /
+         * Special) from the beginning.
+         */
+
+        let text =
+            element.text.trim();
+
+        text = text
+            .replace(
+                /^(TV|ONA|OVA|Movie|Special)\s*/i,
+                ""
+            )
+            .trim();
+
+        return text;
+    }
+
     async getPopular(page) {
 
         /*
@@ -52,11 +109,6 @@ class DefaultExtension extends MProvider {
          *   page 1 -> /anime/
          *   page 2 -> /anime/page/2/
          *   page 3 -> /anime/page/3/
-         *   ...
-         *
-         * This gives us access to the full catalog
-         * instead of just the few items on the
-         * homepage.
          */
 
         let url;
@@ -94,17 +146,11 @@ class DefaultExtension extends MProvider {
                 continue;
             }
 
-            /*
-             * Strip query strings and fragments so
-             * duplicate detection works properly.
-             */
-
             const cleanHref =
                 href.split("?")[0].split("#")[0];
 
             /*
-             * Skip the archive root itself
-             * (e.g. "/anime/" or "/anime").
+             * Skip the archive root itself.
              */
 
             if (
@@ -114,8 +160,7 @@ class DefaultExtension extends MProvider {
             }
 
             /*
-             * Skip pagination links
-             * (e.g. "/anime/page/2/").
+             * Skip pagination links.
              */
 
             if (
@@ -123,6 +168,20 @@ class DefaultExtension extends MProvider {
                     cleanHref
                 )
             ) {
+                continue;
+            }
+
+            /*
+             * Only accept links that contain an
+             * <img> — these are the real anime
+             * cards. Nav links and badge links
+             * won't have an image inside.
+             */
+
+            const img =
+                element.selectFirst("img");
+
+            if (!img) {
                 continue;
             }
 
@@ -138,18 +197,9 @@ class DefaultExtension extends MProvider {
             }
 
             const title =
-                element.text.trim();
+                this.extractTitle(element);
 
-            if (!title) {
-                continue;
-            }
-
-            /*
-             * Ignore nav junk and the "View All"
-             * placeholder.
-             */
-
-            if (title.length < 2) {
+            if (!title || title.length < 2) {
                 continue;
             }
 
@@ -161,26 +211,15 @@ class DefaultExtension extends MProvider {
 
             seen.add(absoluteUrl);
 
-            /*
-             * Grab the cover image from the card
-             * itself (fast, no extra requests).
-             */
-
             let imageUrl = "";
 
-            const img =
-                element.selectFirst("img");
+            const src =
+                img.attr("src") ||
+                img.attr("data-src");
 
-            if (img) {
-
-                const src =
-                    img.attr("src") ||
-                    img.attr("data-src");
-
-                if (src) {
-                    imageUrl =
-                        this.makeAbsoluteUrl(src);
-                }
+            if (src) {
+                imageUrl =
+                    this.makeAbsoluteUrl(src);
             }
 
             list.push({
@@ -193,10 +232,6 @@ class DefaultExtension extends MProvider {
 
         /*
          * Detect whether a next page exists.
-         * We look for any pagination link whose
-         * page number is greater than the current
-         * page, plus the WordPress rel="next"
-         * fallback.
          */
 
         let hasNextPage = false;
@@ -284,11 +319,6 @@ class DefaultExtension extends MProvider {
             }
         }
 
-        /*
-         * Fallback in case the cover image
-         * is not inside an image link.
-         */
-
         if (!imageUrl) {
 
             const images =
@@ -338,10 +368,6 @@ class DefaultExtension extends MProvider {
                 continue;
             }
 
-            /*
-             * Ignore comment form text.
-             */
-
             if (
                 text.includes(
                     "Your email address will not be published"
@@ -357,10 +383,6 @@ class DefaultExtension extends MProvider {
             ) {
                 continue;
             }
-
-            /*
-             * Ignore very short paragraphs.
-             */
 
             if (text.length < 20) {
                 continue;
@@ -403,11 +425,6 @@ class DefaultExtension extends MProvider {
         const seenEpisodes =
             new Set();
 
-        /*
-         * Get the exact anime slug
-         * from the detail page URL.
-         */
-
         let animeSlug = "";
 
         const animeMatch =
@@ -419,11 +436,6 @@ class DefaultExtension extends MProvider {
             animeSlug =
                 animeMatch[1];
         }
-
-        /*
-         * Only episode URLs belonging
-         * to this exact anime will be used.
-         */
 
         const episodePrefix =
             "/" +
@@ -444,12 +456,6 @@ class DefaultExtension extends MProvider {
                 continue;
             }
 
-            /*
-             * Convert absolute AniDB URLs
-             * into relative paths so the
-             * prefix check works consistently.
-             */
-
             if (
                 href.startsWith(
                     this.source.baseUrl
@@ -462,24 +468,11 @@ class DefaultExtension extends MProvider {
                     );
             }
 
-            /*
-             * Remove query parameters.
-             */
-
             href =
                 href.split("?")[0];
 
-            /*
-             * Remove fragments.
-             */
-
             href =
                 href.split("#")[0];
-
-            /*
-             * Make sure this is an episode
-             * of the current anime.
-             */
 
             if (
                 !href.startsWith(
@@ -488,10 +481,6 @@ class DefaultExtension extends MProvider {
             ) {
                 continue;
             }
-
-            /*
-             * Extract episode number.
-             */
 
             const numberMatch =
                 href.match(
@@ -507,10 +496,6 @@ class DefaultExtension extends MProvider {
 
             const episodeUrl =
                 this.makeAbsoluteUrl(href);
-
-            /*
-             * Prevent duplicates.
-             */
 
             if (
                 seenEpisodes.has(
@@ -540,11 +525,6 @@ class DefaultExtension extends MProvider {
             });
         }
 
-        /* -------------------------
-           SORT EPISODES
-           NEWEST FIRST
-        ------------------------- */
-
         episodes.sort(
             (a, b) => {
 
@@ -567,10 +547,6 @@ class DefaultExtension extends MProvider {
                 return bNumber - aNumber;
             }
         );
-
-        /* -------------------------
-           RETURN DETAIL
-        ------------------------- */
 
         return {
             url: url,
