@@ -795,20 +795,6 @@ class DefaultExtension extends MProvider {
         };
     }
 
-    /*
-     * getVideoList(url)
-     *
-     * Fetches the episode page and extracts a
-     * playable video URL.
-     *
-     * Strategy:
-     *   1. Find any <iframe> on the episode page.
-     *   2. If the iframe points directly at an
-     *      .mp4 / .m3u8, use it.
-     *   3. Otherwise, fetch the iframe page and
-     *      scan its HTML + scripts for the real
-     *      stream URL.
-     */
     async getVideoList(url) {
 
         const response =
@@ -816,12 +802,6 @@ class DefaultExtension extends MProvider {
 
         const document =
             new Document(response.body);
-
-        /*
-         * Step 1: Collect every iframe on the page
-         * (many players expose multiple server
-         * options).
-         */
 
         const iframes =
             document.select("iframe");
@@ -831,55 +811,51 @@ class DefaultExtension extends MProvider {
         }
 
         const videos = [];
-        const seenVideoUrls = new Set();
+        const seenVideos = new Set();
 
         for (const iframe of iframes) {
-
-            /*
-             * Try common lazy-load attributes
-             * first, then fall back to src.
-             */
 
             let iframeUrl =
                 iframe.attr("data-src") ||
                 iframe.attr("data-lazy-src") ||
-                iframe.attr("data-litespeed-src") ||
                 iframe.attr("src") ||
                 "";
 
             iframeUrl = iframeUrl.trim();
 
-            if (
-                !iframeUrl ||
-                iframeUrl === "about:blank" ||
-                iframeUrl.startsWith("data:")
-            ) {
+            if (!iframeUrl) {
+                continue;
+            }
+
+            if (iframeUrl === "about:blank") {
+                continue;
+            }
+
+            if (iframeUrl.startsWith("data:")) {
                 continue;
             }
 
             iframeUrl =
                 this.makeAbsoluteUrl(iframeUrl);
 
-            /*
-             * Direct video file: use it as-is.
-             */
-
             if (
                 iframeUrl.includes(".m3u8") ||
                 iframeUrl.includes(".mp4")
             ) {
 
-                if (!seenVideoUrls.has(iframeUrl)) {
-                    seenVideoUrls.add(iframeUrl);
+                if (!seenVideos.has(iframeUrl)) {
+
+                    seenVideos.add(iframeUrl);
 
                     videos.push({
                         url: iframeUrl,
                         originalUrl: iframeUrl,
                         quality: "default",
                         headers: {
-                            "Referer": this.source.baseUrl,
+                            "Referer":
+                                this.source.baseUrl,
                             "User-Agent":
-                                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                                "Mozilla/5.0"
                         }
                     });
                 }
@@ -887,39 +863,143 @@ class DefaultExtension extends MProvider {
                 continue;
             }
 
-            /*
-             * Step 2: Fetch the iframe page and look
-             * for the real stream URL.
-             */
-
             try {
 
                 const iframeResponse =
-                    await this.client.get(
-                        iframeUrl
-                    );
+                    await this.client.get(iframeUrl);
 
-                const iframeHtml =
-                    iframeResponse.body;
-
-                let videoUrl =
-                    this.extractVideoUrlFromHtml(
-                        iframeHtml
+                const videoUrl =
+                    this.findVideoUrl(
+                        iframeResponse.body
                     );
 
                 if (!videoUrl) {
                     continue;
                 }
 
-                videoUrl =
+                const absoluteVideoUrl =
                     this.makeAbsoluteUrl(videoUrl);
 
-                if (seenVideoUrls.has(videoUrl)) {
+                if (
+                    seenVideos.has(
+                        absoluteVideoUrl
+                    )
+                ) {
                     continue;
                 }
 
-                seenVideoUrls.add(videoUrl);
+                seenVideos.add(absoluteVideoUrl);
 
                 videos.push({
-                    url: videoUrl,
-                    
+                    url: absoluteVideoUrl,
+                    originalUrl: absoluteVideoUrl,
+                    quality: "default",
+                    headers: {
+                        "Referer": iframeUrl,
+                        "User-Agent":
+                            "Mozilla/5.0"
+                    }
+                });
+
+            } catch (e) {
+                continue;
+            }
+        }
+
+        return videos;
+    }
+
+    findVideoUrl(html) {
+
+        if (!html) {
+            return "";
+        }
+
+        const markers = [
+            "file:",
+            "source:",
+            "src:"
+        ];
+
+        for (const marker of markers) {
+
+            let index =
+                html.indexOf(marker);
+
+            while (index !== -1) {
+
+                const after =
+                    html.substring(
+                        index + marker.length,
+                        index + marker.length + 500
+                    );
+
+                const found =
+                    this.pullUrl(after);
+
+                if (found) {
+                    return found;
+                }
+
+                index = html.indexOf(
+                    marker,
+                    index + marker.length
+                );
+            }
+        }
+
+        const direct =
+            this.pullUrl(html);
+
+        return direct;
+    }
+
+    pullUrl(text) {
+
+        if (!text) {
+            return "";
+        }
+
+        const start =
+            text.search(/https?:\/\//);
+
+        if (start === -1) {
+            return "";
+        }
+
+        let end = start;
+
+        while (end < text.length) {
+
+            const c = text[end];
+
+            if (
+                c === '"' ||
+                c === "'" ||
+                c === " " ||
+                c === "\n" ||
+                c === "\r" ||
+                c === "\t" ||
+                c === "\\" ||
+                c === ")"
+            ) {
+                break;
+            }
+
+            end++;
+        }
+
+        const url =
+            text.substring(start, end);
+
+        if (
+            url.includes(".m3u8") ||
+            url.includes(".mp4")
+        ) {
+            return url;
+        }
+
+        return "";
+    }
+
+}
