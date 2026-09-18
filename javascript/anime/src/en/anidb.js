@@ -8,7 +8,7 @@ const mangayomiSources = [
         "typeSource": "single",
         "itemType": 1,
         "isNsfw": false,
-        "version": "0.2.7",
+        "version": "0.2.8",
         "pkgPath": "anime/src/en/anidb.js",
         "notes": "AniDB anime source"
     }
@@ -19,14 +19,6 @@ class DefaultExtension extends MProvider {
     constructor() {
         super();
         this.client = new Client();
-
-        /*
-         * Persistent dedupe sets that survive
-         * across getPopular(page) calls so we
-         * can filter out items that appeared on
-         * a previous page. Reset when page === 1
-         * (a fresh load / reload).
-         */
 
         this._seenUrls = new Set();
         this._seenTitles = new Set();
@@ -209,64 +201,18 @@ class DefaultExtension extends MProvider {
         return junk.includes(t);
     }
 
-    async getPopular(page) {
-
-        /*
-         * Reset the persistent dedupe sets when
-         * starting a fresh load (page 1). This
-         * prevents stale data from a previous
-         * session from blocking results.
-         *
-         * Also defensively re-create the sets if
-         * the constructor wasn't called for some
-         * reason.
-         */
-
-        if (page === 1) {
-            this._seenUrls = new Set();
-            this._seenTitles = new Set();
-        }
-
-        if (!this._seenUrls) {
-            this._seenUrls = new Set();
-        }
-
-        if (!this._seenTitles) {
-            this._seenTitles = new Set();
-        }
-
-        let url;
-
-        if (page === 1) {
-            url = this.source.baseUrl + "/anime/";
-        } else {
-            url =
-                this.source.baseUrl +
-                "/anime/page/" +
-                page +
-                "/";
-        }
-
-        const response =
-            await this.client.get(url);
-
-        const document =
-            new Document(response.body);
-
-        const animeLinks =
-            document.select(
-                'a[href*="/anime/"]'
-            );
+    /*
+     * Parse a set of <a href*="/anime/"> elements
+     * into the standard list format. Used by
+     * getPopular, getLatestUpdates, and getSearch
+     * so all three endpoints stay consistent.
+     *
+     * Returns { list, newCount } so callers can
+     * decide whether pagination should continue.
+     */
+    parseAnimeCards(animeLinks) {
 
         const list = [];
-
-        /*
-         * Count how many *new* items this page
-         * contributed. If it's zero on page 2+,
-         * the site is just repeating content and
-         * we should stop paginating.
-         */
-
         let newCount = 0;
 
         for (const element of animeLinks) {
@@ -349,15 +295,56 @@ class DefaultExtension extends MProvider {
             });
         }
 
-        /*
-         * Only advertise a next page if this page
-         * actually contributed something new. If
-         * a page is all duplicates, we stop.
-         */
+        return {
+            list: list,
+            newCount: newCount
+        };
+    }
+
+    async getPopular(page) {
+
+        if (page === 1) {
+            this._seenUrls = new Set();
+            this._seenTitles = new Set();
+        }
+
+        if (!this._seenUrls) {
+            this._seenUrls = new Set();
+        }
+
+        if (!this._seenTitles) {
+            this._seenTitles = new Set();
+        }
+
+        let url;
+
+        if (page === 1) {
+            url = this.source.baseUrl + "/anime/";
+        } else {
+            url =
+                this.source.baseUrl +
+                "/anime/page/" +
+                page +
+                "/";
+        }
+
+        const response =
+            await this.client.get(url);
+
+        const document =
+            new Document(response.body);
+
+        const animeLinks =
+            document.select(
+                'a[href*="/anime/"]'
+            );
+
+        const result =
+            this.parseAnimeCards(animeLinks);
 
         let hasNextPage = false;
 
-        if (newCount > 0) {
+        if (result.newCount > 0) {
 
             const pageLinks =
                 document.select(
@@ -394,9 +381,300 @@ class DefaultExtension extends MProvider {
         }
 
         return {
-            list: list,
+            list: result.list,
             hasNextPage: hasNextPage
         };
+    }
+
+    /*
+     * Latest Updates.
+     *
+     * Common WordPress anime sites expose latest
+     * episodes at /episodes/ (Dooplay) or latest
+     * anime at /anime/?orderby=date. We try
+     * /episodes/ first since it best matches the
+     * "Latest" tab, then fall back to the anime
+     * archive ordered by date.
+     */
+    async getLatestUpdates(page) {
+
+        if (page === 1) {
+            this._seenUrls = new Set();
+            this._seenTitles = new Set();
+        }
+
+        let url;
+
+        if (page === 1) {
+            url =
+                this.source.baseUrl +
+                "/episodes/";
+        } else {
+            url =
+                this.source.baseUrl +
+                "/episodes/page/" +
+                page +
+                "/";
+        }
+
+        let response;
+
+        try {
+
+            response =
+                await this.client.get(url);
+
+        } catch (e) {
+
+            /*
+             * Fallback: anime archive ordered by date.
+             */
+
+            let fallbackUrl;
+
+            if (page === 1) {
+                fallbackUrl =
+                    this.source.baseUrl +
+                    "/anime/?orderby=date";
+            } else {
+                fallbackUrl =
+                    this.source.baseUrl +
+                    "/anime/page/" +
+                    page +
+                    "/?orderby=date";
+            }
+
+            response =
+                await this.client.get(fallbackUrl);
+        }
+
+        const document =
+            new Document(response.body);
+
+        /*
+         * Latest pages typically link to
+         * episode pages like "/<slug>-episode-N"
+         * OR to anime detail pages. We collect
+         * both, then convert episode links to
+         * their parent anime where possible.
+         */
+
+        let animeLinks =
+            document.select(
+                'a[href*="/anime/"]'
+            );
+
+        /*
+         * If the page has no anime-detail links
+         * (typical for a Dooplay /episodes/ page),
+         * fall back to scraping episode links and
+         * deriving the parent anime URL from the
+         * slug.
+         */
+
+        if (animeLinks.length === 0) {
+
+            const episodeLinks =
+                document.select(
+                    'a[href*="-episode-"]'
+                );
+
+            const derivedSeen =
+                new Set();
+
+            const list = [];
+
+            for (const el of episodeLinks) {
+
+                let href =
+                    el.attr("href");
+
+                if (!href) {
+                    continue;
+                }
+
+                href =
+                    href.split("?")[0].split("#")[0];
+
+                const match =
+                    href.match(
+                        /\/([^\/]+?)-episode-\d+\/?$/
+                    );
+
+                if (!match) {
+                    continue;
+                }
+
+                const slug = match[1];
+
+                if (derivedSeen.has(slug)) {
+                    continue;
+                }
+
+                derivedSeen.add(slug);
+
+                const animeUrl =
+                    this.source.baseUrl +
+                    "/anime/" +
+                    slug +
+                    "/";
+
+                const title =
+                    this.extractTitle(el) || slug;
+
+                if (this.isUiJunk(title)) {
+                    continue;
+                }
+
+                const urlKey =
+                    this.normalizeUrl(animeUrl);
+
+                if (this._seenUrls.has(urlKey)) {
+                    continue;
+                }
+
+                this._seenUrls.add(urlKey);
+
+                let imageUrl =
+                    this.extractImage(el);
+
+                /*
+                 * If the card the episode link is
+                 * inside has an <img>, use it.
+                 */
+
+                list.push({
+                    name: title,
+                    url: animeUrl,
+                    link: animeUrl,
+                    imageUrl: imageUrl
+                });
+            }
+
+            return {
+                list: list,
+                hasNextPage:
+                    this.hasNextPageInDoc(
+                        document,
+                        page,
+                        "/episodes/page/"
+                    )
+            };
+        }
+
+        const result =
+            this.parseAnimeCards(animeLinks);
+
+        return {
+            list: result.list,
+            hasNextPage:
+                result.newCount > 0 &&
+                this.hasNextPageInDoc(
+                    document,
+                    page,
+                    "/episodes/page/"
+                )
+        };
+    }
+
+    /*
+     * Search.
+     *
+     * Uses the WordPress default search endpoint
+     * ("/?s=<query>"), which most anime themes
+     * support. Pagination is "/page/N/?s=<query>".
+     */
+    async getSearch(query, page, filters) {
+
+        if (page === 1) {
+            this._seenUrls = new Set();
+            this._seenTitles = new Set();
+        }
+
+        const encoded =
+            encodeURIComponent(query);
+
+        let url;
+
+        if (page === 1) {
+            url =
+                this.source.baseUrl +
+                "/?s=" +
+                encoded;
+        } else {
+            url =
+                this.source.baseUrl +
+                "/page/" +
+                page +
+                "/?s=" +
+                encoded;
+        }
+
+        const response =
+            await this.client.get(url);
+
+        const document =
+            new Document(response.body);
+
+        const animeLinks =
+            document.select(
+                'a[href*="/anime/"]'
+            );
+
+        const result =
+            this.parseAnimeCards(animeLinks);
+
+        return {
+            list: result.list,
+            hasNextPage:
+                result.newCount > 0 &&
+                this.hasNextPageInDoc(
+                    document,
+                    page,
+                    "/page/"
+                )
+        };
+    }
+
+    /*
+     * Helper: does this document contain a link
+     * to a page number greater than the current
+     * page under the given prefix?
+     */
+    hasNextPageInDoc(document, page, prefix) {
+
+        const links =
+            document.select(
+                'a[href*="' + prefix + '"]'
+            );
+
+        const regex =
+            new RegExp(
+                prefix.replace(/\//g, "\\/") +
+                "(\\d+)\\/?"
+            );
+
+        for (const link of links) {
+
+            const href =
+                link.attr("href") || "";
+
+            const match =
+                href.match(regex);
+
+            if (
+                match &&
+                parseInt(match[1], 10) > page
+            ) {
+                return true;
+            }
+        }
+
+        if (document.selectFirst('link[rel="next"]')) {
+            return true;
+        }
+
+        return false;
     }
 
     async getDetail(url) {
@@ -644,44 +922,4 @@ class DefaultExtension extends MProvider {
                 scanlator:
                     "English Subbed",
 
-                dateUpload:
-                    null
-            });
-        }
-
-        episodes.sort(
-            (a, b) => {
-
-                const aMatch =
-                    a.name.match(/\d+/);
-
-                const bMatch =
-                    b.name.match(/\d+/);
-
-                const aNumber =
-                    aMatch
-                        ? parseInt(aMatch[0])
-                        : 0;
-
-                const bNumber =
-                    bMatch
-                        ? parseInt(bMatch[0])
-                        : 0;
-
-                return bNumber - aNumber;
-            }
-        );
-
-        return {
-            url: url,
-            title: title,
-            imageUrl: imageUrl,
-            description: description,
-            author: "",
-            genre: genres,
-            status: 0,
-            episodes: episodes
-        };
-    }
-
-}
+      
