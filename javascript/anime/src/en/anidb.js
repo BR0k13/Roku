@@ -8,7 +8,7 @@ const mangayomiSources = [
         "typeSource": "single",
         "itemType": 1,
         "isNsfw": false,
-        "version": "0.3.0",
+        "version": "0.3.1",
         "pkgPath": "anime/src/en/anidb.js",
         "notes": "AniDB anime source"
     }
@@ -200,10 +200,21 @@ class DefaultExtension extends MProvider {
         return junk.includes(t);
     }
 
-    buildList(animeLinks) {
+    buildList(animeLinks, titleFilter) {
 
         const list = [];
         let newCount = 0;
+
+        /*
+         * Normalize the search filter once so we
+         * don't repeat the .toLowerCase() call
+         * inside the loop.
+         */
+
+        const filterLower =
+            titleFilter
+                ? titleFilter.toLowerCase().trim()
+                : "";
 
         for (const element of animeLinks) {
 
@@ -261,6 +272,22 @@ class DefaultExtension extends MProvider {
 
             if (this.isUiJunk(title)) {
                 continue;
+            }
+
+            /*
+             * Client-side search filter: only keep
+             * titles that actually contain the query.
+             */
+
+            if (filterLower) {
+
+                if (
+                    !title
+                        .toLowerCase()
+                        .includes(filterLower)
+                ) {
+                    continue;
+                }
             }
 
             const titleKey =
@@ -322,7 +349,7 @@ class DefaultExtension extends MProvider {
             );
 
         const result =
-            this.buildList(animeLinks);
+            this.buildList(animeLinks, "");
 
         let hasNextPage = false;
 
@@ -366,12 +393,6 @@ class DefaultExtension extends MProvider {
             this._seenTitles = new Set();
         }
 
-        /*
-         * Real AniDB latest-updates endpoint.
-         *   page 1 -> /anime/?status=&type=&order=update
-         *   page N -> /anime/page/N/?status=&type=&order=update
-         */
-
         let url;
 
         if (page === 1) {
@@ -398,7 +419,7 @@ class DefaultExtension extends MProvider {
             );
 
         const result =
-            this.buildList(animeLinks);
+            this.buildList(animeLinks, "");
 
         let hasNextPage = false;
 
@@ -438,12 +459,11 @@ class DefaultExtension extends MProvider {
     /*
      * Search.
      *
-     * Mangayomi calls `search(query, page, filters)` —
-     * NOT `getSearch`. This was the cause of the
-     * "search not implemented" error.
-     *
-     * Endpoint (confirmed): /?s=<query>
-     * Pagination:           /page/N/?s=<query>
+     * The theme ignores "?s=" alone, so we add
+     * "&post_type=anime" to force it to return
+     * anime posts only. Then we filter the
+     * results client-side by title match as a
+     * safety net, so unrelated anime are dropped.
      */
     async search(query, page, filters) {
 
@@ -461,14 +481,16 @@ class DefaultExtension extends MProvider {
             url =
                 this.source.baseUrl +
                 "/?s=" +
-                encoded;
+                encoded +
+                "&post_type=anime";
         } else {
             url =
                 this.source.baseUrl +
                 "/page/" +
                 page +
                 "/?s=" +
-                encoded;
+                encoded +
+                "&post_type=anime";
         }
 
         const response =
@@ -482,8 +504,13 @@ class DefaultExtension extends MProvider {
                 'a[href*="/anime/"]'
             );
 
+        /*
+         * Pass the query as the title filter so
+         * only matching anime survive.
+         */
+
         const result =
-            this.buildList(animeLinks);
+            this.buildList(animeLinks, query);
 
         let hasNextPage = false;
 
@@ -521,9 +548,7 @@ class DefaultExtension extends MProvider {
     }
 
     /*
-     * Alias: some Mangayomi builds may look for
-     * `getSearch`. Delegate to `search` so both
-     * naming conventions work.
+     * Alias for older builds that call getSearch.
      */
     async getSearch(query, page, filters) {
         return await this.search(
