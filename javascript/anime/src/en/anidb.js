@@ -8,7 +8,7 @@ const mangayomiSources = [
         "typeSource": "single",
         "itemType": 1,
         "isNsfw": false,
-        "version": "0.2.5",
+        "version": "0.2.6",
         "pkgPath": "anime/src/en/anidb.js",
         "notes": "AniDB anime source"
     }
@@ -45,12 +45,6 @@ class DefaultExtension extends MProvider {
         return this.source.baseUrl + "/" + url;
     }
 
-    /*
-     * Normalize a URL for duplicate detection.
-     * Strips the query string, fragments, and any
-     * trailing slash so that "/anime/bleach/" and
-     * "/anime/bleach" collapse into the same key.
-     */
     normalizeUrl(url) {
 
         if (!url) {
@@ -60,15 +54,9 @@ class DefaultExtension extends MProvider {
         let normalized =
             url.split("?")[0].split("#")[0];
 
-        /*
-         * Collapse trailing slashes.
-         */
         normalized =
             normalized.replace(/\/+$/, "");
 
-        /*
-         * Lowercase for case-insensitive comparison.
-         */
         normalized =
             normalized.toLowerCase();
 
@@ -76,11 +64,35 @@ class DefaultExtension extends MProvider {
     }
 
     /*
-     * Try to extract a clean anime title from a
-     * card link. Handles the common WordPress
-     * anime-theme markup variants.
+     * Extracts a clean anime title from a card link.
+     *
+     * Order of preference:
+     *   1. <img alt="...">      (cleanest source)
+     *   2. a[title="..."]       (tooltip attribute)
+     *   3. Common title selectors (.tt, .title, h2, ...)
+     *   4. Raw text with type badge + doubling stripped
      */
     extractTitle(element) {
+
+        const img =
+            element.selectFirst("img");
+
+        if (img) {
+
+            const alt =
+                (img.attr("alt") || "").trim();
+
+            if (alt.length > 1) {
+                return alt;
+            }
+        }
+
+        const titleAttr =
+            (element.attr("title") || "").trim();
+
+        if (titleAttr.length > 1) {
+            return titleAttr;
+        }
 
         const titleSelectors = [
             ".tt",
@@ -119,7 +131,94 @@ class DefaultExtension extends MProvider {
             )
             .trim();
 
+        /*
+         * Collapse doubled strings like
+         * "Black TorchBlack Torch" -> "Black Torch".
+         */
+
+        if (
+            text.length >= 2 &&
+            text.length % 2 === 0
+        ) {
+
+            const half =
+                text.length / 2;
+
+            if (
+                text.slice(0, half) ===
+                text.slice(half)
+            ) {
+                text = text.slice(0, half);
+            }
+        }
+
         return text;
+    }
+
+    /*
+     * Extracts an image URL from an <img>, trying
+     * common lazy-load attributes and skipping
+     * placeholder "data:" URIs.
+     */
+    extractImage(element) {
+
+        const img =
+            element.selectFirst("img");
+
+        if (!img) {
+            return "";
+        }
+
+        const attrs = [
+            "data-src",
+            "data-lazy-src",
+            "data-original",
+            "data-img",
+            "src"
+        ];
+
+        for (const attr of attrs) {
+
+            const v =
+                (img.attr(attr) || "").trim();
+
+            if (
+                v &&
+                !v.startsWith("data:")
+            ) {
+                return this.makeAbsoluteUrl(v);
+            }
+        }
+
+        return "";
+    }
+
+    /*
+     * Detects UI junk links that happen to contain
+     * an <img> (e.g. "Text Mode" toggle).
+     */
+    isUiJunk(title) {
+
+        const t =
+            title.toLowerCase().trim();
+
+        const junk = [
+            "text mode",
+            "grid",
+            "list",
+            "list mode",
+            "grid mode",
+            "view",
+            "view all",
+            "sort",
+            "filter",
+            "next",
+            "prev",
+            "previous",
+            "search"
+        ];
+
+        return junk.includes(t);
     }
 
     async getPopular(page) {
@@ -153,7 +252,7 @@ class DefaultExtension extends MProvider {
 
         for (const element of animeLinks) {
 
-            let href =
+            const href =
                 element.attr("href");
 
             if (!href) {
@@ -163,19 +262,11 @@ class DefaultExtension extends MProvider {
             const cleanHref =
                 href.split("?")[0].split("#")[0];
 
-            /*
-             * Skip the archive root itself.
-             */
-
             if (
                 /\/anime\/?$/.test(cleanHref)
             ) {
                 continue;
             }
-
-            /*
-             * Skip pagination links.
-             */
 
             if (
                 /\/anime\/page\/\d+\/?$/.test(
@@ -184,12 +275,6 @@ class DefaultExtension extends MProvider {
             ) {
                 continue;
             }
-
-            /*
-             * Only accept links that contain an
-             * <img> — these are the real anime
-             * cards.
-             */
 
             const img =
                 element.selectFirst("img");
@@ -205,12 +290,6 @@ class DefaultExtension extends MProvider {
                 continue;
             }
 
-            /*
-             * Normalize before deduping so that
-             * "/anime/bleach/" and "/anime/bleach"
-             * are treated as the same entry.
-             */
-
             const urlKey =
                 this.normalizeUrl(absoluteUrl);
 
@@ -225,18 +304,9 @@ class DefaultExtension extends MProvider {
                 continue;
             }
 
-            if (
-                title.toLowerCase().includes("view all")
-            ) {
+            if (this.isUiJunk(title)) {
                 continue;
             }
-
-            /*
-             * Secondary dedupe by title (catches
-             * cases where two different URLs point
-             * to the same anime, e.g. a featured
-             * widget linking to a variant path).
-             */
 
             const titleKey =
                 title.toLowerCase().trim();
@@ -248,16 +318,8 @@ class DefaultExtension extends MProvider {
             seenUrls.add(urlKey);
             seenTitles.add(titleKey);
 
-            let imageUrl = "";
-
-            const src =
-                img.attr("src") ||
-                img.attr("data-src");
-
-            if (src) {
-                imageUrl =
-                    this.makeAbsoluteUrl(src);
-            }
+            const imageUrl =
+                this.extractImage(element);
 
             list.push({
                 name: title,
