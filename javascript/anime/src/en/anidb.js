@@ -8,7 +8,7 @@ const mangayomiSources = [
         "typeSource": "single",
         "itemType": 1,
         "isNsfw": false,
-        "version": "0.3.3",
+        "version": "0.3.4",
         "pkgPath": "anime/src/en/anidb.js",
         "notes": "AniDB anime source"
     }
