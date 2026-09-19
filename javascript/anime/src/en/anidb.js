@@ -1110,52 +1110,50 @@ class DefaultExtension extends MProvider {
      */
     extractMediaUrls(html) {
 
-        const results = [];
+    const results = [];
 
-        if (!html) {
-            return results;
-        }
-
-        const attrPatterns = [
-            /data-src=["']([^"']+)["']/g,
-            /src=["']([^"']+)["']/g
-        ];
-
-        for (const pattern of attrPatterns) {
-
-            let match;
-
-            while (
-                (match = pattern.exec(html)) !== null
-            ) {
-
-                const u = match[1];
-
-                if (
-                    u &&
-                    (u.indexOf(".mp4") !== -1 ||
-                        u.indexOf(".m3u8") !== -1)
-                ) {
-                    results.push(u);
-                }
-            }
-        }
-
-        if (results.length === 0) {
-
-            const fallback =
-                /https?:\/\/[^\s"'<>]+?\.(?:mp4|m3u8)[^\s"'<>]*/g;
-
-            let match;
-
-            while (
-                (match = fallback.exec(html)) !== null
-            ) {
-                results.push(match[0]);
-            }
-        }
-
+    if (!html) {
         return results;
     }
 
-}
+    const attrPatterns = [
+        /data-src=["']([^"']+)["']/g,
+        /src=["']([^"']+)["']/g
+    ];
+
+    for (const pattern of attrPatterns) {
+
+        let match;
+
+        while (
+            (match = pattern.exec(html)) !== null
+        ) {
+
+            const u = match[1];
+
+            if (
+                u &&
+                (u.indexOf(".mp4") !== -1 ||
+                    u.indexOf(".m3u8") !== -1)
+            ) {
+                results.push(u);
+            }
+        }
+    }
+
+    if (results.length === 0) {
+
+        const fallback =
+            /https?:\/\/[^\s"'<>]+?\.(?:mp4|m3u8)[^\s"'<>]*/g;
+
+        let match;
+
+        while (
+            (match = fallback.exec(html)) !== null
+        ) {
+            results.push(match[0]);
+        }
+    }
+
+    return results;
+    }
