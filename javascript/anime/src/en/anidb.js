@@ -810,37 +810,45 @@ class DefaultExtension extends MProvider {
      * We extract the primary URL first, then decode
      * each mirror and pull its video URL too.
      */
-    async getVideoList(url) {
+    aasync getVideoList(url) {
 
-        const response =
-            await this.client.get(url);
+    const response =
+        await this.client.get(url);
 
-        const document =
-            new Document(response.body);
+    const document =
+        new Document(response.body);
 
-        const videos = [];
-        const seenVideos = new Set();
+    const videos = [];
+    const seenVideos = new Set();
 
-        /*
-         * 1. Primary source: any <video> tag on the
-         * page with a data-src or src attribute.
-         */
+    const urlAttrs = [
+        "data-src",
+        "data-lazy-src",
+        "data-original",
+        "data-video",
+        "src"
+    ];
 
-        const videoTags =
-            document.select("video");
+    const videoTags =
+        document.select("video");
 
-        for (const video of videoTags) {
+    for (const video of videoTags) {
+
+        for (const attr of urlAttrs) {
 
             let src =
-                video.attr("data-src") ||
-                video.attr("src") ||
-                "";
-
-            src = src.trim();
+                (video.attr(attr) || "").trim();
 
             if (
                 !src ||
                 src.startsWith("data:")
+            ) {
+                continue;
+            }
+
+            if (
+                src.indexOf(".mp4") === -1 &&
+                src.indexOf(".m3u8") === -1
             ) {
                 continue;
             }
@@ -854,27 +862,35 @@ class DefaultExtension extends MProvider {
             videos.push({
                 url: src,
                 originalUrl: src,
-                quality: "default",
+                quality: "Server 1",
                 headers: {
                     "Referer": url,
                     "User-Agent":
-                        "Mozilla/5.0"
+                        "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36"
                 }
             });
 
-            /*
-             * Also pull any <source> children.
-             */
+            break;
+        }
 
-            const sources =
-                video.select("source");
+        const sources =
+            video.select("source");
 
-            for (const source of sources) {
+        for (const source of sources) {
 
-                const ssrc =
-                    (source.attr("src") || "").trim();
+            for (const attr of urlAttrs) {
 
-                if (!ssrc || seenVideos.has(ssrc)) {
+                let ssrc =
+                    (source.attr(attr) || "").trim();
+
+                if (
+                    !ssrc ||
+                    ssrc.startsWith("data:")
+                ) {
+                    continue;
+                }
+
+                if (seenVideos.has(ssrc)) {
                     continue;
                 }
 
@@ -883,86 +899,146 @@ class DefaultExtension extends MProvider {
                 videos.push({
                     url: ssrc,
                     originalUrl: ssrc,
-                    quality: "default",
+                    quality: "Server 1",
                     headers: {
                         "Referer": url,
                         "User-Agent":
-                            "Mozilla/5.0"
+                            "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36"
                     }
                 });
+
+                break;
             }
         }
+    }
 
-        /*
-         * 2. Backup mirrors inside the
-         * <select class="mirror"> dropdown.
-         * Each <option value="..."> is a base64
-         * blob of HTML containing another video.
-         */
+    const allSources =
+        document.select("source");
 
-        const options =
-            document.select(
-                'select.mirror option'
-            );
+    for (const source of allSources) {
 
-        for (const option of options) {
+        for (const attr of urlAttrs) {
 
-            const rawValue =
-                (option.attr("value") || "").trim();
+            let ssrc =
+                (source.attr(attr) || "").trim();
 
-            if (!rawValue || rawValue.length < 20) {
+            if (
+                !ssrc ||
+                ssrc.startsWith("data:")
+            ) {
                 continue;
             }
 
-            const label =
-                option.text.trim() || "Mirror";
-
-            let decoded = "";
-
-            try {
-
-                decoded =
-                    this.decodeBase64(rawValue);
-
-            } catch (e) {
-
+            if (
+                ssrc.indexOf(".mp4") === -1 &&
+                ssrc.indexOf(".m3u8") === -1
+            ) {
                 continue;
             }
 
-            if (!decoded) {
+            if (seenVideos.has(ssrc)) {
                 continue;
             }
 
-            /*
-             * Pull every data-src / src url out
-             * of the decoded HTML.
-             */
+            seenVideos.add(ssrc);
 
-            const found =
-                this.extractMediaUrls(decoded);
-
-            for (const mediaUrl of found) {
-
-                if (seenVideos.has(mediaUrl)) {
-                    continue;
+            videos.push({
+                url: ssrc,
+                originalUrl: ssrc,
+                quality: "Server 2",
+                headers: {
+                    "Referer": url,
+                    "User-Agent":
+                        "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36"
                 }
+            });
 
-                seenVideos.add(mediaUrl);
+            break;
+        }
+    }
 
-                videos.push({
-                    url: mediaUrl,
-                    originalUrl: mediaUrl,
-                    quality: label,
-                    headers: {
-                        "Referer": url,
-                        "User-Agent":
-                            "Mozilla/5.0"
-                    }
-                });
-            }
+    const options =
+        document.select(
+            'select.mirror option'
+        );
+
+    let mirrorIndex = 0;
+
+    for (const option of options) {
+
+        const rawValue =
+            (option.attr("value") || "").trim();
+
+        if (!rawValue || rawValue.length < 20) {
+            continue;
         }
 
-        return videos;
+        let decoded = "";
+
+        try {
+            decoded = this.decodeBase64(rawValue);
+        } catch (e) {
+            continue;
+        }
+
+        if (!decoded) {
+            continue;
+        }
+
+        const found =
+            this.extractMediaUrls(decoded);
+
+        for (const mediaUrl of found) {
+
+            if (seenVideos.has(mediaUrl)) {
+                continue;
+            }
+
+            seenVideos.add(mediaUrl);
+
+            mirrorIndex++;
+
+            videos.push({
+                url: mediaUrl,
+                originalUrl: mediaUrl,
+                quality:
+                    "Mirror " + mirrorIndex,
+                headers: {
+                    "Referer": url,
+                    "User-Agent":
+                        "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36"
+                }
+            });
+        }
+    }
+
+    if (videos.length === 0) {
+
+        const found =
+            this.extractMediaUrls(response.body);
+
+        for (const mediaUrl of found) {
+
+            if (seenVideos.has(mediaUrl)) {
+                continue;
+            }
+
+            seenVideos.add(mediaUrl);
+
+            videos.push({
+                url: mediaUrl,
+                originalUrl: mediaUrl,
+                quality: "Fallback",
+                headers: {
+                    "Referer": url,
+                    "User-Agent":
+                        "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36"
+                }
+            });
+        }
+    }
+
+    return videos;
     }
 
     /*
