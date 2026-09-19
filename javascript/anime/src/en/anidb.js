@@ -8,7 +8,7 @@ const mangayomiSources = [
         "typeSource": "single",
         "itemType": 1,
         "isNsfw": false,
-        "version": "0.3.2",
+        "version": "0.3.3",
         "pkgPath": "anime/src/en/anidb.js",
         "notes": "AniDB anime source"
     }
@@ -795,6 +795,21 @@ class DefaultExtension extends MProvider {
         };
     }
 
+    /*
+     * getVideoList(url)
+     *
+     * AniDB's episode page exposes the video via a
+     * <video class="uvp-player" data-src="..."> tag
+     * (no iframes involved).
+     *
+     * Additional backup servers are stored inside a
+     * <select class="mirror"> where each <option>
+     * value is base64-encoded HTML containing another
+     * <video data-src="..."> tag.
+     *
+     * We extract the primary URL first, then decode
+     * each mirror and pull its video URL too.
+     */
     async getVideoList(url) {
 
         const response =
@@ -803,203 +818,268 @@ class DefaultExtension extends MProvider {
         const document =
             new Document(response.body);
 
-        const iframes =
-            document.select("iframe");
-
-        if (iframes.length === 0) {
-            return [];
-        }
-
         const videos = [];
         const seenVideos = new Set();
 
-        for (const iframe of iframes) {
+        /*
+         * 1. Primary source: any <video> tag on the
+         * page with a data-src or src attribute.
+         */
 
-            let iframeUrl =
-                iframe.attr("data-src") ||
-                iframe.attr("data-lazy-src") ||
-                iframe.attr("src") ||
+        const videoTags =
+            document.select("video");
+
+        for (const video of videoTags) {
+
+            let src =
+                video.attr("data-src") ||
+                video.attr("src") ||
                 "";
 
-            iframeUrl = iframeUrl.trim();
-
-            if (!iframeUrl) {
-                continue;
-            }
-
-            if (iframeUrl === "about:blank") {
-                continue;
-            }
-
-            if (iframeUrl.startsWith("data:")) {
-                continue;
-            }
-
-            iframeUrl =
-                this.makeAbsoluteUrl(iframeUrl);
+            src = src.trim();
 
             if (
-                iframeUrl.includes(".m3u8") ||
-                iframeUrl.includes(".mp4")
+                !src ||
+                src.startsWith("data:")
             ) {
-
-                if (!seenVideos.has(iframeUrl)) {
-
-                    seenVideos.add(iframeUrl);
-
-                    videos.push({
-                        url: iframeUrl,
-                        originalUrl: iframeUrl,
-                        quality: "default",
-                        headers: {
-                            "Referer":
-                                this.source.baseUrl,
-                            "User-Agent":
-                                "Mozilla/5.0"
-                        }
-                    });
-                }
-
                 continue;
             }
 
-            try {
+            if (seenVideos.has(src)) {
+                continue;
+            }
 
-                const iframeResponse =
-                    await this.client.get(iframeUrl);
+            seenVideos.add(src);
 
-                const videoUrl =
-                    this.findVideoUrl(
-                        iframeResponse.body
-                    );
+            videos.push({
+                url: src,
+                originalUrl: src,
+                quality: "default",
+                headers: {
+                    "Referer": url,
+                    "User-Agent":
+                        "Mozilla/5.0"
+                }
+            });
 
-                if (!videoUrl) {
+            /*
+             * Also pull any <source> children.
+             */
+
+            const sources =
+                video.select("source");
+
+            for (const source of sources) {
+
+                const ssrc =
+                    (source.attr("src") || "").trim();
+
+                if (!ssrc || seenVideos.has(ssrc)) {
                     continue;
                 }
 
-                const absoluteVideoUrl =
-                    this.makeAbsoluteUrl(videoUrl);
-
-                if (
-                    seenVideos.has(
-                        absoluteVideoUrl
-                    )
-                ) {
-                    continue;
-                }
-
-                seenVideos.add(absoluteVideoUrl);
+                seenVideos.add(ssrc);
 
                 videos.push({
-                    url: absoluteVideoUrl,
-                    originalUrl: absoluteVideoUrl,
+                    url: ssrc,
+                    originalUrl: ssrc,
                     quality: "default",
                     headers: {
-                        "Referer": iframeUrl,
+                        "Referer": url,
                         "User-Agent":
                             "Mozilla/5.0"
                     }
                 });
+            }
+        }
+
+        /*
+         * 2. Backup mirrors inside the
+         * <select class="mirror"> dropdown.
+         * Each <option value="..."> is a base64
+         * blob of HTML containing another video.
+         */
+
+        const options =
+            document.select(
+                'select.mirror option'
+            );
+
+        for (const option of options) {
+
+            const rawValue =
+                (option.attr("value") || "").trim();
+
+            if (!rawValue || rawValue.length < 20) {
+                continue;
+            }
+
+            const label =
+                option.text.trim() || "Mirror";
+
+            let decoded = "";
+
+            try {
+
+                decoded =
+                    this.decodeBase64(rawValue);
 
             } catch (e) {
+
                 continue;
+            }
+
+            if (!decoded) {
+                continue;
+            }
+
+            /*
+             * Pull every data-src / src url out
+             * of the decoded HTML.
+             */
+
+            const found =
+                this.extractMediaUrls(decoded);
+
+            for (const mediaUrl of found) {
+
+                if (seenVideos.has(mediaUrl)) {
+                    continue;
+                }
+
+                seenVideos.add(mediaUrl);
+
+                videos.push({
+                    url: mediaUrl,
+                    originalUrl: mediaUrl,
+                    quality: label,
+                    headers: {
+                        "Referer": url,
+                        "User-Agent":
+                            "Mozilla/5.0"
+                    }
+                });
             }
         }
 
         return videos;
     }
 
-    findVideoUrl(html) {
+    /*
+     * Decode a base64 string safely. Falls back
+     * to a manual table if atob isn't available.
+     */
+    decodeBase64(input) {
 
-        if (!html) {
+        if (!input) {
             return "";
         }
 
-        const markers = [
-            "file:",
-            "source:",
-            "src:"
-        ];
+        try {
 
-        for (const marker of markers) {
+            if (typeof atob === "function") {
+                return atob(input);
+            }
 
-            let index =
-                html.indexOf(marker);
+        } catch (e) {
+            // fall through to manual decode
+        }
 
-            while (index !== -1) {
+        const chars =
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZ" +
+            "abcdefghijklmnopqrstuvwxyz" +
+            "0123456789+/=";
 
-                const after =
-                    html.substring(
-                        index + marker.length,
-                        index + marker.length + 500
-                    );
+        let str = input.replace(/=+$/, "");
+        let output = "";
 
-                const found =
-                    this.pullUrl(after);
+        if (str.length % 4 === 1) {
+            return "";
+        }
 
-                if (found) {
-                    return found;
-                }
+        let bs = 0;
+        let buffer = 0;
 
-                index = html.indexOf(
-                    marker,
-                    index + marker.length
+        for (let i = 0; i < str.length; i++) {
+
+            const c = str[i];
+            const idx = chars.indexOf(c);
+
+            if (idx === -1) {
+                continue;
+            }
+
+            buffer =
+                (buffer << 6) | idx;
+
+            bs += 6;
+
+            if (bs >= 8) {
+
+                bs -= 8;
+
+                output += String.fromCharCode(
+                    (buffer >> bs) & 0xff
                 );
             }
         }
 
-        const direct =
-            this.pullUrl(html);
-
-        return direct;
+        return output;
     }
 
-    pullUrl(text) {
+    /*
+     * Find every plausible video URL in a chunk
+     * of HTML. Looks at data-src, src and any
+     * literal .mp4 / .m3u8 URL.
+     */
+    extractMediaUrls(html) {
 
-        if (!text) {
-            return "";
+        const results = [];
+
+        if (!html) {
+            return results;
         }
 
-        const start =
-            text.search(/https?:\/\//);
+        const attrPatterns = [
+            /data-src=["']([^"']+)["']/g,
+            /src=["']([^"']+)["']/g
+        ];
 
-        if (start === -1) {
-            return "";
-        }
+        for (const pattern of attrPatterns) {
 
-        let end = start;
+            let match;
 
-        while (end < text.length) {
-
-            const c = text[end];
-
-            if (
-                c === '"' ||
-                c === "'" ||
-                c === " " ||
-                c === "\n" ||
-                c === "\r" ||
-                c === "\t" ||
-                c === "\\" ||
-                c === ")"
+            while (
+                (match = pattern.exec(html)) !== null
             ) {
-                break;
+
+                const u = match[1];
+
+                if (
+                    u &&
+                    (u.indexOf(".mp4") !== -1 ||
+                        u.indexOf(".m3u8") !== -1)
+                ) {
+                    results.push(u);
+                }
             }
-
-            end++;
         }
 
-        const url =
-            text.substring(start, end);
+        if (results.length === 0) {
 
-        if (
-            url.includes(".m3u8") ||
-            url.includes(".mp4")
-        ) {
-            return url;
+            const fallback =
+                /https?:\/\/[^\s"'<>]+?\.(?:mp4|m3u8)[^\s"'<>]*/g;
+
+            let match;
+
+            while (
+                (match = fallback.exec(html)) !== null
+            ) {
+                results.push(match[0]);
+            }
         }
 
-        return "";
+        return results;
     }
 
 }
