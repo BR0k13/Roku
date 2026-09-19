@@ -795,88 +795,112 @@ class DefaultExtension extends MProvider {
         };
     }
 
-    /*
-     * getVideoList(url)
-     *
-     * AniDB's episode page exposes the video via a
-     * <video class="uvp-player" data-src="..."> tag
-     * (no iframes involved).
-     *
-     * Additional backup servers are stored inside a
-     * <select class="mirror"> where each <option>
-     * value is base64-encoded HTML containing another
-     * <video data-src="..."> tag.
-     *
-     * We extract the primary URL first, then decode
-     * each mirror and pull its video URL too.
-     */
-    aasync getVideoList(url) {
+    async getVideoList(url) {
 
-    const response =
-        await this.client.get(url);
+        const response =
+            await this.client.get(url);
 
-    const document =
-        new Document(response.body);
+        const document =
+            new Document(response.body);
 
-    const videos = [];
-    const seenVideos = new Set();
+        const videos = [];
+        const seenVideos = new Set();
 
-    const urlAttrs = [
-        "data-src",
-        "data-lazy-src",
-        "data-original",
-        "data-video",
-        "src"
-    ];
+        const urlAttrs = [
+            "data-src",
+            "data-lazy-src",
+            "data-original",
+            "data-video",
+            "src"
+        ];
 
-    const videoTags =
-        document.select("video");
+        const videoTags =
+            document.select("video");
 
-    for (const video of videoTags) {
+        for (const video of videoTags) {
 
-        for (const attr of urlAttrs) {
+            for (const attr of urlAttrs) {
 
-            let src =
-                (video.attr(attr) || "").trim();
+                let src =
+                    (video.attr(attr) || "").trim();
 
-            if (
-                !src ||
-                src.startsWith("data:")
-            ) {
-                continue;
-            }
-
-            if (
-                src.indexOf(".mp4") === -1 &&
-                src.indexOf(".m3u8") === -1
-            ) {
-                continue;
-            }
-
-            if (seenVideos.has(src)) {
-                continue;
-            }
-
-            seenVideos.add(src);
-
-            videos.push({
-                url: src,
-                originalUrl: src,
-                quality: "Server 1",
-                headers: {
-                    "Referer": url,
-                    "User-Agent":
-                        "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36"
+                if (
+                    !src ||
+                    src.startsWith("data:")
+                ) {
+                    continue;
                 }
-            });
 
-            break;
+                if (
+                    src.indexOf(".mp4") === -1 &&
+                    src.indexOf(".m3u8") === -1
+                ) {
+                    continue;
+                }
+
+                if (seenVideos.has(src)) {
+                    continue;
+                }
+
+                seenVideos.add(src);
+
+                videos.push({
+                    url: src,
+                    originalUrl: src,
+                    quality: "Server 1",
+                    headers: {
+                        "Referer": url,
+                        "User-Agent":
+                            "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36"
+                    }
+                });
+
+                break;
+            }
+
+            const sources =
+                video.select("source");
+
+            for (const source of sources) {
+
+                for (const attr of urlAttrs) {
+
+                    let ssrc =
+                        (source.attr(attr) || "").trim();
+
+                    if (
+                        !ssrc ||
+                        ssrc.startsWith("data:")
+                    ) {
+                        continue;
+                    }
+
+                    if (seenVideos.has(ssrc)) {
+                        continue;
+                    }
+
+                    seenVideos.add(ssrc);
+
+                    videos.push({
+                        url: ssrc,
+                        originalUrl: ssrc,
+                        quality: "Server 1",
+                        headers: {
+                            "Referer": url,
+                            "User-Agent":
+                                "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36"
+                        }
+                    });
+
+                    break;
+                }
+            }
         }
 
-        const sources =
-            video.select("source");
+        const allSources =
+            document.select("source");
 
-        for (const source of sources) {
+        for (const source of allSources) {
 
             for (const attr of urlAttrs) {
 
@@ -890,6 +914,13 @@ class DefaultExtension extends MProvider {
                     continue;
                 }
 
+                if (
+                    ssrc.indexOf(".mp4") === -1 &&
+                    ssrc.indexOf(".m3u8") === -1
+                ) {
+                    continue;
+                }
+
                 if (seenVideos.has(ssrc)) {
                     continue;
                 }
@@ -897,8 +928,8 @@ class DefaultExtension extends MProvider {
                 seenVideos.add(ssrc);
 
                 videos.push({
-                    url: ssrc,
-                    originalUrl: ssrc,
+                    url: src,
+                    originalUrl: src,
                     quality: "Server 1",
                     headers: {
                         "Referer": url,
@@ -909,142 +940,175 @@ class DefaultExtension extends MProvider {
 
                 break;
             }
-        }
-    }
 
-    const allSources =
-        document.select("source");
+            const sources =
+                video.select("source");
 
-    for (const source of allSources) {
+            for (const source of sources) {
 
-        for (const attr of urlAttrs) {
+                for (const attr of urlAttrs) {
 
-            let ssrc =
-                (source.attr(attr) || "").trim();
+                    let ssrc =
+                        (source.attr(attr) || "").trim();
 
-            if (
-                !ssrc ||
-                ssrc.startsWith("data:")
-            ) {
-                continue;
-            }
+                    if (
+                        !ssrc ||
+                        ssrc.startsWith("data:")
+                    ) {
+                        continue;
+                    }
 
-            if (
-                ssrc.indexOf(".mp4") === -1 &&
-                ssrc.indexOf(".m3u8") === -1
-            ) {
-                continue;
-            }
+                    if (seenVideos.has(ssrc)) {
+                        continue;
+                    }
 
-            if (seenVideos.has(ssrc)) {
-                continue;
-            }
+                    seenVideos.add(ssrc);
 
-            seenVideos.add(ssrc);
+                    videos.push({
+                        url: ssrc,
+                        originalUrl: ssrc,
+                        quality: "Server 1",
+                        headers: {
+                            "Referer": url,
+                            "User-Agent":
+                                "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36"
+                        }
+                    });
 
-            videos.push({
-                url: ssrc,
-                originalUrl: ssrc,
-                quality: "Server 2",
-                headers: {
-                    "Referer": url,
-                    "User-Agent":
-                        "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36"
+                    break;
                 }
-            });
-
-            break;
-        }
-    }
-
-    const options =
-        document.select(
-            'select.mirror option'
-        );
-
-    let mirrorIndex = 0;
-
-    for (const option of options) {
-
-        const rawValue =
-            (option.attr("value") || "").trim();
-
-        if (!rawValue || rawValue.length < 20) {
-            continue;
+            }
         }
 
-        let decoded = "";
+        const allSources =
+            document.select("source");
 
-        try {
-            decoded = this.decodeBase64(rawValue);
-        } catch (e) {
-            continue;
+        for (const source of allSources) {
+
+            for (const attr of urlAttrs) {
+
+                let ssrc =
+                    (source.attr(attr) || "").trim();
+
+                if (
+                    !ssrc ||
+                    ssrc.startsWith("data:")
+                ) {
+                    continue;
+                }
+
+                if (
+                    ssrc.indexOf(".mp4") === -1 &&
+                    ssrc.indexOf(".m3u8") === -1
+                ) {
+                    continue;
+                }
+
+                if (seenVideos.has(ssrc)) {
+                    continue;
+                }
+
+                seenVideos.add(ssrc);
+
+                videos.push({
+                    url: ssrc,
+                    originalUrl: ssrc,
+                    quality: "Server 2",
+                    headers: {
+                        "Referer": url,
+                        "User-Agent":
+                            "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36"
+                    }
+                });
+
+                break;
+            }
         }
 
-        if (!decoded) {
-            continue;
-        }
+        const options =
+            document.select(
+                'select.mirror option'
+            );
 
-        const found =
-            this.extractMediaUrls(decoded);
+        let mirrorIndex = 0;
 
-        for (const mediaUrl of found) {
+        for (const option of options) {
 
-            if (seenVideos.has(mediaUrl)) {
+            const rawValue =
+                (option.attr("value") || "").trim();
+
+            if (!rawValue || rawValue.length < 20) {
                 continue;
             }
 
-            seenVideos.add(mediaUrl);
+            let decoded = "";
 
-            mirrorIndex++;
-
-            videos.push({
-                url: mediaUrl,
-                originalUrl: mediaUrl,
-                quality:
-                    "Mirror " + mirrorIndex,
-                headers: {
-                    "Referer": url,
-                    "User-Agent":
-                        "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36"
-                }
-            });
-        }
-    }
-
-    if (videos.length === 0) {
-
-        const found =
-            this.extractMediaUrls(response.body);
-
-        for (const mediaUrl of found) {
-
-            if (seenVideos.has(mediaUrl)) {
+            try {
+                decoded = this.decodeBase64(rawValue);
+            } catch (e) {
                 continue;
             }
 
-            seenVideos.add(mediaUrl);
+            if (!decoded) {
+                continue;
+            }
 
-            videos.push({
-                url: mediaUrl,
-                originalUrl: mediaUrl,
-                quality: "Fallback",
-                headers: {
-                    "Referer": url,
-                    "User-Agent":
-                        "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36"
+            const found =
+                this.extractMediaUrls(decoded);
+
+            for (const mediaUrl of found) {
+
+                if (seenVideos.has(mediaUrl)) {
+                    continue;
                 }
-            });
+
+                seenVideos.add(mediaUrl);
+
+                mirrorIndex++;
+
+                videos.push({
+                    url: mediaUrl,
+                    originalUrl: mediaUrl,
+                    quality:
+                        "Mirror " + mirrorIndex,
+                    headers: {
+                        "Referer": url,
+                        "User-Agent":
+                            "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36"
+                    }
+                });
+            }
         }
+
+        if (videos.length === 0) {
+
+            const found =
+                this.extractMediaUrls(response.body);
+
+            for (const mediaUrl of found) {
+
+                if (seenVideos.has(mediaUrl)) {
+                    continue;
+                }
+
+                seenVideos.add(mediaUrl);
+
+                videos.push({
+                    url: mediaUrl,
+                    originalUrl: mediaUrl,
+                    quality: "Fallback",
+                    headers: {
+                        "Referer": url,
+                        "User-Agent":
+                            "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36"
+                    }
+                });
+            }
+        }
+
+        return videos;
     }
 
-    return videos;
-    }
-
-    /*
-     * Decode a base64 string safely. Falls back
-     * to a manual table if atob isn't available.
-     */
     decodeBase64(input) {
 
         if (!input) {
@@ -1058,7 +1122,7 @@ class DefaultExtension extends MProvider {
             }
 
         } catch (e) {
-            // fall through to manual decode
+            // fall through
         }
 
         const chars =
@@ -1068,11 +1132,6 @@ class DefaultExtension extends MProvider {
 
         let str = input.replace(/=+$/, "");
         let output = "";
-
-        if (str.length % 4 === 1) {
-            return "";
-        }
-
         let bs = 0;
         let buffer = 0;
 
@@ -1103,57 +1162,54 @@ class DefaultExtension extends MProvider {
         return output;
     }
 
-    /*
-     * Find every plausible video URL in a chunk
-     * of HTML. Looks at data-src, src and any
-     * literal .mp4 / .m3u8 URL.
-     */
     extractMediaUrls(html) {
 
-    const results = [];
+        const results = [];
 
-    if (!html) {
+        if (!html) {
+            return results;
+        }
+
+        const attrPatterns = [
+            /data-src=["']([^"']+)["']/g,
+            /src=["']([^"']+)["']/g
+        ];
+
+        for (const pattern of attrPatterns) {
+
+            let match;
+
+            while (
+                (match = pattern.exec(html)) !== null
+            ) {
+
+                const u = match[1];
+
+                if (
+                    u &&
+                    (u.indexOf(".mp4") !== -1 ||
+                        u.indexOf(".m3u8") !== -1)
+                ) {
+                    results.push(u);
+                }
+            }
+        }
+
+        if (results.length === 0) {
+
+            const fallback =
+                /https?:\/\/[^\s"'<>]+?\.(?:mp4|m3u8)[^\s"'<>]*/g;
+
+            let match;
+
+            while (
+                (match = fallback.exec(html)) !== null
+            ) {
+                results.push(match[0]);
+            }
+        }
+
         return results;
     }
 
-    const attrPatterns = [
-        /data-src=["']([^"']+)["']/g,
-        /src=["']([^"']+)["']/g
-    ];
-
-    for (const pattern of attrPatterns) {
-
-        let match;
-
-        while (
-            (match = pattern.exec(html)) !== null
-        ) {
-
-            const u = match[1];
-
-            if (
-                u &&
-                (u.indexOf(".mp4") !== -1 ||
-                    u.indexOf(".m3u8") !== -1)
-            ) {
-                results.push(u);
-            }
-        }
-    }
-
-    if (results.length === 0) {
-
-        const fallback =
-            /https?:\/\/[^\s"'<>]+?\.(?:mp4|m3u8)[^\s"'<>]*/g;
-
-        let match;
-
-        while (
-            (match = fallback.exec(html)) !== null
-        ) {
-            results.push(match[0]);
-        }
-    }
-
-    return results;
-    }
+}
