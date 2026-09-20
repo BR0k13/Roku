@@ -1,0 +1,24 @@
+[
+  {
+    "name": "Miruro",
+    "id": 617345892,
+    "baseUrl": "https://www.miruro.to",
+    "lang": "en",
+    "typeSource": "single",
+    "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://www.miruro.to",
+    "dateFormat": "",
+    "dateFormatLocale": "",
+    "isNsfw": false,
+    "hasCloudflare": true,
+    "sourceCodeUrl": "https://raw.githubusercontent.com/BR0k13/Roku/main/javascript/anime/src/en/miruro.js",
+    "apiUrl": "",
+    "version": "0.1.0",
+    "isManga": false,
+    "itemType": 1,
+    "isFullData": false,
+    "appMinVerReq": "0.5.0",
+    "additionalParams": "",
+    "sourceCodeLanguage": 1,
+    "notes": "Miruro anime source"
+  }
+]
