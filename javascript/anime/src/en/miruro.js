@@ -1,25 +1,10 @@
-const mangayomiSources = [
-    {
-        "name": "Miruro",
-        "lang": "en",
-        "baseUrl": "https://www.miruro.ru",
-        "apiUrl": "https://graphql.anilist.co",
-        "iconUrl": "https://www.miruro.ru/favicon.ico",
-        "typeSource": "single",
-        "itemType": 1,
-        "isNsfw": false,
-        "version": "0.1.0",
-        "pkgPath": "anime/src/en/miruro.js",
-        "notes": "Miruro anime source (AniList metadata + pipe API streams)"
-    }
-];
-
 class DefaultExtension extends MProvider {
 
     constructor() {
         super();
         this.client = new Client();
         this.miruroBases = [
+            "https://www.miruro.to",
             "https://www.miruro.ru",
             "https://www.miruro.bz",
             "https://www.miruro.online"
@@ -43,7 +28,6 @@ class DefaultExtension extends MProvider {
         return atob(s);
     }
 
-    // Convert a base64 string into a Uint8Array
     base64ToBytes(b64) {
         const binary = atob(b64);
         const bytes = new Uint8Array(binary.length);
@@ -53,53 +37,21 @@ class DefaultExtension extends MProvider {
         return bytes;
     }
 
-    // Gzip decompress using pako (must be available in Mangayomi)
-    gunzip(bytes) {
+    decodeGzip(bytes) {
         if (typeof pako !== "undefined" && pako.ungzip) {
             return pako.ungzip(bytes, { to: "string" });
         }
-        // Fallback: try DecompressionStream (may not exist in all builds)
-        if (typeof DecompressionStream !== "undefined") {
-            // DecompressionStream is async; we handle it in decodePipeResponse
-            return null;
-        }
-        throw new Error("No gzip decompressor available");
+        throw new Error("pako not available for gzip");
     }
 
     decodePipeResponse(encoded) {
-        // Add padding
         let s = encoded.replace(/-/g, "+").replace(/_/g, "/");
         while (s.length % 4) {
             s += "=";
         }
         const bytes = this.base64ToBytes(s);
-        const text = this.gunzip(bytes);
-        if (text === null) {
-            throw new Error("gzip fallback not available in sync context");
-        }
+        const text = this.decodeGzip(bytes);
         return JSON.parse(text);
-    }
-
-    async decodePipeResponseAsync(encoded) {
-        let s = encoded.replace(/-/g, "+").replace(/_/g, "/");
-        while (s.length % 4) {
-            s += "=";
-        }
-        const bytes = this.base64ToBytes(s);
-
-        if (typeof pako !== "undefined" && pako.ungzip) {
-            return JSON.parse(pako.ungzip(bytes, { to: "string" }));
-        }
-
-        if (typeof DecompressionStream !== "undefined") {
-            const ds = new DecompressionStream("gzip");
-            const stream = new Blob([bytes]).stream().pipeThrough(ds);
-            const buf = await new Response(stream).arrayBuffer();
-            const text = new TextDecoder().decode(buf);
-            return JSON.parse(text);
-        }
-
-        throw new Error("No gzip decompressor available");
     }
 
     encodePipeRequest(payload) {
@@ -121,9 +73,7 @@ class DefaultExtension extends MProvider {
             {
                 "Content-Type": "application/json",
                 "Accept": "application/json",
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                "Origin": "https://www.miruro.ru",
-                "Referer": "https://www.miruro.ru/"
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
             },
             JSON.stringify(body)
         );
@@ -138,7 +88,6 @@ class DefaultExtension extends MProvider {
 
     async pipeRequest(payload) {
         const encoded = this.encodePipeRequest(payload);
-
         let lastError = null;
 
         for (const base of this.miruroBases) {
@@ -151,7 +100,7 @@ class DefaultExtension extends MProvider {
                 });
 
                 if (response.statusCode === 200 && response.body) {
-                    return await this.decodePipeResponseAsync(response.body.trim());
+                    return this.decodePipeResponse(response.body.trim());
                 }
             } catch (e) {
                 lastError = e;
@@ -170,14 +119,11 @@ class DefaultExtension extends MProvider {
             id
             title { romaji english native }
             coverImage { large extraLarge }
-            bannerImage
             format
             status
             episodes
             averageScore
-            seasonYear
             genres
-            description
         `;
     }
 
@@ -191,8 +137,8 @@ class DefaultExtension extends MProvider {
 
         return {
             name: title,
-            url: "https://www.miruro.ru/info/" + media.id,
-            link: "https://www.miruro.ru/info/" + media.id,
+            url: "https://www.miruro.to/info/" + media.id,
+            link: "https://www.miruro.to/info/" + media.id,
             imageUrl: image || ""
         };
     }
@@ -201,7 +147,7 @@ class DefaultExtension extends MProvider {
         const gql = `
             query ($page: Int, $perPage: Int) {
                 Page(page: $page, perPage: $perPage) {
-                    pageInfo { currentPage lastPage hasNextPage }
+                    pageInfo { hasNextPage }
                     media(type: ANIME, sort: POPULARITY_DESC) {
                         ${this.mediaListFields()}
                     }
@@ -211,14 +157,11 @@ class DefaultExtension extends MProvider {
 
         const data = await this.anilistQuery(gql, { page: page, perPage: 30 });
         const pageData = data.Page || {};
-        const media = pageData.media || [];
-        const pageInfo = pageData.pageInfo || {};
-
-        const list = media.map((m) => this.mapMediaToItem(m));
+        const list = (pageData.media || []).map((m) => this.mapMediaToItem(m));
 
         return {
             list: list,
-            hasNextPage: pageInfo.hasNextPage || false
+            hasNextPage: (pageData.pageInfo || {}).hasNextPage || false
         };
     }
 
@@ -226,7 +169,7 @@ class DefaultExtension extends MProvider {
         const gql = `
             query ($page: Int, $perPage: Int) {
                 Page(page: $page, perPage: $perPage) {
-                    pageInfo { currentPage lastPage hasNextPage }
+                    pageInfo { hasNextPage }
                     media(type: ANIME, sort: UPDATED_AT_DESC) {
                         ${this.mediaListFields()}
                     }
@@ -236,14 +179,11 @@ class DefaultExtension extends MProvider {
 
         const data = await this.anilistQuery(gql, { page: page, perPage: 30 });
         const pageData = data.Page || {};
-        const media = pageData.media || [];
-        const pageInfo = pageData.pageInfo || {};
-
-        const list = media.map((m) => this.mapMediaToItem(m));
+        const list = (pageData.media || []).map((m) => this.mapMediaToItem(m));
 
         return {
             list: list,
-            hasNextPage: pageInfo.hasNextPage || false
+            hasNextPage: (pageData.pageInfo || {}).hasNextPage || false
         };
     }
 
@@ -251,7 +191,7 @@ class DefaultExtension extends MProvider {
         const gql = `
             query ($search: String, $page: Int, $perPage: Int) {
                 Page(page: $page, perPage: $perPage) {
-                    pageInfo { currentPage lastPage hasNextPage }
+                    pageInfo { hasNextPage }
                     media(search: $search, type: ANIME, sort: SEARCH_MATCH) {
                         ${this.mediaListFields()}
                     }
@@ -266,14 +206,11 @@ class DefaultExtension extends MProvider {
         });
 
         const pageData = data.Page || {};
-        const media = pageData.media || [];
-        const pageInfo = pageData.pageInfo || {};
-
-        const list = media.map((m) => this.mapMediaToItem(m));
+        const list = (pageData.media || []).map((m) => this.mapMediaToItem(m));
 
         return {
             list: list,
-            hasNextPage: pageInfo.hasNextPage || false
+            hasNextPage: (pageData.pageInfo || {}).hasNextPage || false
         };
     }
 
@@ -282,7 +219,6 @@ class DefaultExtension extends MProvider {
     }
 
     async getDetail(url) {
-        // Extract AniList ID from URL like https://www.miruro.ru/info/123/...
         const idMatch = url.match(/\/info\/(\d+)/);
         const anilistId = idMatch ? parseInt(idMatch[1]) : 0;
 
@@ -305,15 +241,9 @@ class DefaultExtension extends MProvider {
                     id
                     title { romaji english native }
                     coverImage { large extraLarge }
-                    bannerImage
                     description
-                    format
                     status
-                    episodes
-                    duration
                     genres
-                    seasonYear
-                    averageScore
                 }
             }
         `;
@@ -328,8 +258,7 @@ class DefaultExtension extends MProvider {
             (media.coverImage.extraLarge || media.coverImage.large);
         const description = (media.description || "").replace(/<[^>]+>/g, "");
 
-        // Fetch episodes via Miruro pipe
-        let episodes = [];
+        const episodes = [];
 
         try {
             const raw = await this.pipeRequest({
@@ -340,28 +269,17 @@ class DefaultExtension extends MProvider {
                 version: "0.1.0"
             });
 
-            // The response shape varies; try common structures
-            const providerMap = raw.providers || {};
-            const firstProvider = Object.keys(providerMap)[0];
-            const providerData = providerMap[firstProvider] || {};
+            const providers = raw.providers || {};
+            const firstProvider = Object.keys(providers)[0];
+            const providerData = providers[firstProvider] || {};
             const epMap = providerData.episodes || {};
-
-            // epMap may be { sub: [...], dub: [...] }
             const subList = epMap.sub || [];
             const list = Array.isArray(subList) ? subList : [];
 
             for (const ep of list) {
-                // ep.id is base64url-encoded tracking string
-                let trackingId = ep.id || "";
-                try {
-                    trackingId = this.base64UrlDecode(trackingId);
-                } catch (e) {
-                    // keep original if decode fails
-                }
-
                 episodes.push({
                     name: "Episode " + (ep.number || "?"),
-                    url: "https://www.miruro.ru/watch/" + anilistId +
+                    url: "https://www.miruro.to/watch/" + anilistId +
                          "/" + encodeURIComponent(ep.id || "") +
                          "?provider=" + encodeURIComponent(firstProvider || "bee"),
                     scanlator: "English Subbed",
@@ -369,10 +287,9 @@ class DefaultExtension extends MProvider {
                 });
             }
         } catch (e) {
-            // Episodes failed — leave empty
+            // Episodes failed
         }
 
-        // Sort newest first
         episodes.sort((a, b) => {
             const an = parseInt((a.name.match(/\d+/) || [0])[0]);
             const bn = parseInt((b.name.match(/\d+/) || [0])[0]);
@@ -396,7 +313,6 @@ class DefaultExtension extends MProvider {
     // =========================================================
 
     async getVideoList(url) {
-        // URL format: https://www.miruro.ru/watch/{anilistId}/{episodeId}?provider=bee
         const match = url.match(/\/watch\/(\d+)\/([^?]+)\?provider=([^&]+)/);
         if (!match) {
             return [];
@@ -406,15 +322,11 @@ class DefaultExtension extends MProvider {
         const episodeId = decodeURIComponent(match[2]);
         const provider = decodeURIComponent(match[3]);
 
-        // The episodeId in the URL is base64url-encoded; re-encode it for the API
-        // (Miruro expects the encoded form in the pipe payload)
         const encEpisodeId = this.base64UrlEncode(
             this.base64UrlDecode(episodeId)
         );
 
         const videos = [];
-
-        // Try both sub and dub categories
         const categories = ["sub", "dub"];
 
         for (const category of categories) {
@@ -432,7 +344,6 @@ class DefaultExtension extends MProvider {
                     version: "0.1.0"
                 });
 
-                // Response typically has { streams: [ { url, quality, ... } ] }
                 const streams = raw.streams || raw.sources || [];
 
                 for (const stream of streams) {
@@ -444,16 +355,15 @@ class DefaultExtension extends MProvider {
                     videos.push({
                         url: streamUrl,
                         originalUrl: streamUrl,
-                        quality: (stream.quality || category + " stream").toString(),
+                        quality: (stream.quality || category).toString(),
                         headers: {
-                            "Referer": "https://www.miruro.ru/",
+                            "Referer": "https://www.miruro.to/",
                             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
                         }
                     });
                 }
 
                 if (videos.length > 0 && category === "sub") {
-                    // Prefer sub but still try dub if sub yielded nothing
                     break;
                 }
             } catch (e) {
