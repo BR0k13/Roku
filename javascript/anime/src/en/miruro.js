@@ -37,11 +37,40 @@ class DefaultExtension extends MProvider {
         return bytes;
     }
 
+    // Try multiple gzip approaches.
     decodeGzip(bytes) {
+
+        // Approach 1: pako
         if (typeof pako !== "undefined" && pako.ungzip) {
-            return pako.ungzip(bytes, { to: "string" });
+            try {
+                return pako.ungzip(bytes, { to: "string" });
+            } catch (e) {
+                // fall through
+            }
         }
-        throw new Error("pako not available for gzip");
+
+        // Approach 2: Check if it's actually already plaintext (not gzipped).
+        // Gzip magic bytes are 0x1f 0x8b. If the first bytes aren't those,
+        // treat the data as plain UTF-8.
+        if (bytes.length < 2 || bytes[0] !== 0x1f || bytes[1] !== 0x8b) {
+            // Not gzipped — decode as UTF-8 text
+            let s = "";
+            for (let i = 0; i < bytes.length; i++) {
+                s += String.fromCharCode(bytes[i]);
+            }
+            try {
+                return decodeURIComponent(escape(s));
+            } catch (e) {
+                return s;
+            }
+        }
+
+        // Approach 3: DecompressionStream (async) — we can't do this
+        // in a sync context. Signal to caller.
+        throw new Error(
+            "gzip required but pako unavailable (first bytes: " +
+            bytes[0] + "," + bytes[1] + ")"
+        );
     }
 
     decodePipeResponse(encoded) {
@@ -70,7 +99,7 @@ class DefaultExtension extends MProvider {
     }
 
     // =========================================================
-    // AniList GraphQL — query in URL, empty body via POST
+    // AniList GraphQL
     // =========================================================
 
     async anilistQuery(query, variables) {
@@ -85,7 +114,6 @@ class DefaultExtension extends MProvider {
 
         const errors = [];
 
-        // Attempt 1: POST with query in URL, empty Map body
         try {
             const r = await this.client.post(url, {}, {});
             if (r && r.body) {
@@ -101,7 +129,6 @@ class DefaultExtension extends MProvider {
             errors.push("POST-URL: " + (e.message || e));
         }
 
-        // Attempt 2: GET with query in URL
         try {
             const r = await this.client.get(url);
             if (r && r.body) {
@@ -117,7 +144,6 @@ class DefaultExtension extends MProvider {
             errors.push("GET-URL: " + (e.message || e));
         }
 
-        // Attempt 3: POST with body wrapped as a string inside a Map
         try {
             const r = await this.client.post(
                 "https://graphql.anilist.co",
@@ -146,7 +172,7 @@ class DefaultExtension extends MProvider {
 
     async pipeRequest(payload) {
         const encoded = this.encodePipeRequest(payload);
-        let lastError = null;
+        const errors = [];
 
         for (const base of this.miruroBases) {
             const url = base + "/api/secure/pipe?e=" + encoded;
@@ -157,15 +183,35 @@ class DefaultExtension extends MProvider {
                     "Referer": base + "/"
                 });
 
-                if (response.statusCode === 200 && response.body) {
-                    return this.decodePipeResponse(response.body.trim());
+                if (!response || !response.body) {
+                    errors.push(base + ": empty");
+                    continue;
                 }
+
+                const trimmed = response.body.trim();
+
+                if (trimmed.length === 0) {
+                    errors.push(base + ": blank");
+                    continue;
+                }
+
+                try {
+                    return this.decodePipeResponse(trimmed);
+                } catch (decodeErr) {
+                    errors.push(
+                        base + ": decode → " +
+                        (decodeErr.message || decodeErr) +
+                        " | raw=" + trimmed.substring(0, 40)
+                    );
+                    continue;
+                }
+
             } catch (e) {
-                lastError = e;
+                errors.push(base + ": " + (e.message || e));
             }
         }
 
-        throw lastError || new Error("All Miruro pipes failed");
+        throw new Error(errors.join(" || "));
     }
 
     // =========================================================
@@ -388,25 +434,56 @@ class DefaultExtension extends MProvider {
                 version: "0.1.0"
             });
 
-            const providers = raw.providers || {};
-            const firstProvider = Object.keys(providers)[0];
-            const providerData = providers[firstProvider] || {};
-            const epMap = providerData.episodes || {};
-            const subList = epMap.sub || [];
-            const list = Array.isArray(subList) ? subList : [];
+            // Diagnostic: if response has no `providers` key, show its shape
+            const providers = raw.providers;
 
-            for (const ep of list) {
+            if (!providers) {
+                // Show what keys we actually got
+                const keys = Object.keys(raw).join(",");
                 episodes.push({
-                    name: "Episode " + (ep.number || "?"),
-                    url: "https://www.miruro.to/watch/" + anilistId +
-                         "/" + encodeURIComponent(ep.id || "") +
-                         "?provider=" + encodeURIComponent(firstProvider || "bee"),
-                    scanlator: "English Subbed",
+                    name: "[DIAG] response keys: " + keys,
+                    url: "diag",
+                    scanlator: "",
                     dateUpload: null
                 });
+            } else {
+                const firstProvider = Object.keys(providers)[0];
+                const providerData = providers[firstProvider] || {};
+                const epMap = providerData.episodes || {};
+                const subList = epMap.sub || [];
+                const list = Array.isArray(subList) ? subList : [];
+
+                if (list.length === 0) {
+                    episodes.push({
+                        name: "[DIAG] provider=" + firstProvider +
+                              " no sub episodes. epMap keys: " +
+                              Object.keys(epMap).join(","),
+                        url: "diag",
+                        scanlator: "",
+                        dateUpload: null
+                    });
+                }
+
+                for (const ep of list) {
+                    episodes.push({
+                        name: "Episode " + (ep.number || "?"),
+                        url: "https://www.miruro.to/watch/" + anilistId +
+                             "/" + encodeURIComponent(ep.id || "") +
+                             "?provider=" + encodeURIComponent(firstProvider || "bee"),
+                        scanlator: "English Subbed",
+                        dateUpload: null
+                    });
+                }
             }
-        } catch (e) {
-            // Episodes failed
+
+        } catch (pipeErr) {
+            // Surface the actual pipe error
+            episodes.push({
+                name: "[PIPE ERROR] " + (pipeErr.message || String(pipeErr)),
+                url: "diag",
+                scanlator: "",
+                dateUpload: null
+            });
         }
 
         episodes.sort((a, b) => {
