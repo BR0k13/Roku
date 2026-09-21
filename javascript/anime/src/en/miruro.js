@@ -58,10 +58,6 @@ class DefaultExtension extends MProvider {
         return this.base64UrlEncode(JSON.stringify(payload));
     }
 
-    // =========================================================
-    // GraphQL query minifier
-    // =========================================================
-
     minifyQuery(q) {
         if (!q) {
             return "";
@@ -74,40 +70,74 @@ class DefaultExtension extends MProvider {
     }
 
     // =========================================================
-    // AniList GraphQL — POST with Map body (Mangayomi's actual signature)
+    // AniList GraphQL — query in URL, empty body via POST
     // =========================================================
 
     async anilistQuery(query, variables) {
 
         const minified = this.minifyQuery(query);
 
-        // Mangayomi's client.post signature:
-        //   client.post(url, bodyMap, headersMap)
-        // Body must be a Map — it gets JSON-encoded by the client.
+        const params =
+            "query=" + encodeURIComponent(minified) +
+            "&variables=" + encodeURIComponent(JSON.stringify(variables || {}));
 
-        const r = await this.client.post(
-            "https://graphql.anilist.co",
-            {
-                query: minified,
-                variables: variables || {}
-            },
-            {
-                "Content-Type": "application/json",
-                "Accept": "application/json"
+        const url = "https://graphql.anilist.co?" + params;
+
+        const errors = [];
+
+        // Attempt 1: POST with query in URL, empty Map body
+        try {
+            const r = await this.client.post(url, {}, {});
+            if (r && r.body) {
+                const j = JSON.parse(r.body);
+                if (j.data) {
+                    return j.data;
+                }
+                if (j.errors && j.errors.length) {
+                    errors.push("POST-URL: " + j.errors[0].message);
+                }
             }
-        );
-
-        if (!r || !r.body) {
-            throw new Error("Empty response from AniList");
+        } catch (e) {
+            errors.push("POST-URL: " + (e.message || e));
         }
 
-        const j = JSON.parse(r.body);
-
-        if (j.errors && j.errors.length > 0) {
-            throw new Error("AniList: " + j.errors[0].message);
+        // Attempt 2: GET with query in URL
+        try {
+            const r = await this.client.get(url);
+            if (r && r.body) {
+                const j = JSON.parse(r.body);
+                if (j.data) {
+                    return j.data;
+                }
+                if (j.errors && j.errors.length) {
+                    errors.push("GET-URL: " + j.errors[0].message);
+                }
+            }
+        } catch (e) {
+            errors.push("GET-URL: " + (e.message || e));
         }
 
-        return j.data || {};
+        // Attempt 3: POST with body wrapped as a string inside a Map
+        try {
+            const r = await this.client.post(
+                "https://graphql.anilist.co",
+                { "data": JSON.stringify({ query: minified, variables: variables || {} }) },
+                { "Content-Type": "application/json" }
+            );
+            if (r && r.body) {
+                const j = JSON.parse(r.body);
+                if (j.data) {
+                    return j.data;
+                }
+                if (j.errors && j.errors.length) {
+                    errors.push("POST-STR: " + j.errors[0].message);
+                }
+            }
+        } catch (e) {
+            errors.push("POST-STR: " + (e.message || e));
+        }
+
+        throw new Error(errors.join(" || "));
     }
 
     // =========================================================
