@@ -7,7 +7,9 @@ class DefaultExtension extends MProvider {
             "https://www.miruro.to",
             "https://www.miruro.ru",
             "https://www.miruro.bz",
-            "https://www.miruro.online"
+            "https://www.miruro.online",
+            "https://www.miruro.tv",
+            "https://www.miruro.cc"
         ];
     }
 
@@ -21,7 +23,6 @@ class DefaultExtension extends MProvider {
 
     base64Encode(str) {
         const chars = this._b64Chars();
-
         let utf8 = "";
         for (let i = 0; i < str.length; i++) {
             const c = str.charCodeAt(i);
@@ -36,19 +37,16 @@ class DefaultExtension extends MProvider {
                 utf8 += String.fromCharCode((c & 0x3F) | 0x80);
             }
         }
-
         let result = "";
         const len = utf8.length;
         for (let i = 0; i < len; i += 3) {
             const b1 = utf8.charCodeAt(i);
             const b2 = i + 1 < len ? utf8.charCodeAt(i + 1) : 0;
             const b3 = i + 2 < len ? utf8.charCodeAt(i + 2) : 0;
-
             const e1 = b1 >> 2;
             const e2 = ((b1 & 3) << 4) | (b2 >> 4);
             const e3 = ((b2 & 15) << 2) | (b3 >> 6);
             const e4 = b3 & 63;
-
             result += chars.charAt(e1);
             result += chars.charAt(e2);
             result += i + 1 < len ? chars.charAt(e3) : "=";
@@ -64,46 +62,48 @@ class DefaultExtension extends MProvider {
             .replace(/=+$/, "");
     }
 
-    base64Decode(str) {
+    base64ToBytes(b64) {
         const chars = this._b64Chars();
-
         let cleaned = "";
-        for (let i = 0; i < str.length; i++) {
-            const c = str.charAt(i);
+        for (let i = 0; i < b64.length; i++) {
+            const c = b64.charAt(i);
             if (chars.indexOf(c) !== -1) {
                 cleaned += c;
             }
         }
-
-        let bytes = "";
         const len = cleaned.length;
+        const outLen = Math.floor(len * 3 / 4);
+        const out = new Uint8Array(outLen);
+        let outIdx = 0;
         for (let i = 0; i < len; i += 4) {
             const e1 = chars.indexOf(cleaned.charAt(i));
             const e2 = i + 1 < len ? chars.indexOf(cleaned.charAt(i + 1)) : 0;
             const e3 = i + 2 < len ? chars.indexOf(cleaned.charAt(i + 2)) : 0;
             const e4 = i + 3 < len ? chars.indexOf(cleaned.charAt(i + 3)) : 0;
-
             const b1 = (e1 << 2) | (e2 >> 4);
             const b2 = ((e2 & 15) << 4) | (e3 >> 2);
             const b3 = ((e3 & 3) << 6) | e4;
-
-            bytes += String.fromCharCode(b1);
-            if (i + 2 < len) bytes += String.fromCharCode(b2);
-            if (i + 3 < len) bytes += String.fromCharCode(b3);
+            if (outIdx < outLen) out[outIdx++] = b1 & 0xFF;
+            if (i + 2 < len && outIdx < outLen) out[outIdx++] = b2 & 0xFF;
+            if (i + 3 < len && outIdx < outLen) out[outIdx++] = b3 & 0xFF;
         }
+        return out;
+    }
 
+    base64Decode(str) {
+        const bytes = this.base64ToBytes(str);
         let output = "";
         for (let i = 0; i < bytes.length; i++) {
-            const c = bytes.charCodeAt(i);
+            const c = bytes[i];
             if (c < 0x80) {
                 output += String.fromCharCode(c);
             } else if (c < 0xE0) {
-                const c2 = bytes.charCodeAt(i + 1);
+                const c2 = bytes[i + 1];
                 output += String.fromCharCode(((c & 0x1F) << 6) | (c2 & 0x3F));
                 i++;
             } else {
-                const c2 = bytes.charCodeAt(i + 1);
-                const c3 = bytes.charCodeAt(i + 2);
+                const c2 = bytes[i + 1];
+                const c3 = bytes[i + 2];
                 output += String.fromCharCode(
                     ((c & 0x0F) << 12) | ((c2 & 0x3F) << 6) | (c3 & 0x3F)
                 );
@@ -121,46 +121,11 @@ class DefaultExtension extends MProvider {
         return this.base64Decode(s);
     }
 
-    base64ToBytes(b64) {
-        const chars = this._b64Chars();
-
-        let cleaned = "";
-        for (let i = 0; i < b64.length; i++) {
-            const c = b64.charAt(i);
-            if (chars.indexOf(c) !== -1) {
-                cleaned += c;
-            }
-        }
-
-        const len = cleaned.length;
-        const outLen = Math.floor(len * 3 / 4);
-        const out = new Uint8Array(outLen);
-        let outIdx = 0;
-
-        for (let i = 0; i < len; i += 4) {
-            const e1 = chars.indexOf(cleaned.charAt(i));
-            const e2 = i + 1 < len ? chars.indexOf(cleaned.charAt(i + 1)) : 0;
-            const e3 = i + 2 < len ? chars.indexOf(cleaned.charAt(i + 2)) : 0;
-            const e4 = i + 3 < len ? chars.indexOf(cleaned.charAt(i + 3)) : 0;
-
-            const b1 = (e1 << 2) | (e2 >> 4);
-            const b2 = ((e2 & 15) << 4) | (e3 >> 2);
-            const b3 = ((e3 & 3) << 6) | e4;
-
-            if (outIdx < outLen) out[outIdx++] = b1 & 0xFF;
-            if (i + 2 < len && outIdx < outLen) out[outIdx++] = b2 & 0xFF;
-            if (i + 3 < len && outIdx < outLen) out[outIdx++] = b3 & 0xFF;
-        }
-
-        return out;
-    }
-
     // =========================================================
     // Gzip decode
     // =========================================================
 
     decodeGzip(bytes) {
-
         if (typeof pako !== "undefined" && pako.ungzip) {
             try {
                 return pako.ungzip(bytes, { to: "string" });
@@ -168,7 +133,6 @@ class DefaultExtension extends MProvider {
                 // fall through
             }
         }
-
         if (bytes.length < 2 || bytes[0] !== 0x1f || bytes[1] !== 0x8b) {
             let s = "";
             for (let i = 0; i < bytes.length; i++) {
@@ -180,7 +144,6 @@ class DefaultExtension extends MProvider {
                 return s;
             }
         }
-
         throw new Error(
             "gzip required but pako unavailable (first bytes: " +
             bytes[0] + "," + bytes[1] + ")"
@@ -213,28 +176,42 @@ class DefaultExtension extends MProvider {
     }
 
     // =========================================================
+    // Browser-like headers
+    // =========================================================
+
+    browserHeaders(base) {
+        return {
+            "User-Agent":
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
+                "AppleWebKit/537.36 (KHTML, like Gecko) " +
+                "Chrome/131.0.0.0 Safari/537.36",
+            "Accept": "application/json, text/plain, */*",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Referer": base + "/",
+            "Origin": base,
+            "Sec-Fetch-Dest": "empty",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Site": "same-origin"
+        };
+    }
+
+    // =========================================================
     // AniList GraphQL
     // =========================================================
 
     async anilistQuery(query, variables) {
-
         const minified = this.minifyQuery(query);
-
         const params =
             "query=" + encodeURIComponent(minified) +
             "&variables=" + encodeURIComponent(JSON.stringify(variables || {}));
-
         const url = "https://graphql.anilist.co?" + params;
-
         const errors = [];
 
         try {
             const r = await this.client.post(url, {}, {});
             if (r && r.body) {
                 const j = JSON.parse(r.body);
-                if (j.data) {
-                    return j.data;
-                }
+                if (j.data) return j.data;
                 if (j.errors && j.errors.length) {
                     errors.push("POST-URL: " + j.errors[0].message);
                 }
@@ -247,9 +224,7 @@ class DefaultExtension extends MProvider {
             const r = await this.client.get(url);
             if (r && r.body) {
                 const j = JSON.parse(r.body);
-                if (j.data) {
-                    return j.data;
-                }
+                if (j.data) return j.data;
                 if (j.errors && j.errors.length) {
                     errors.push("GET-URL: " + j.errors[0].message);
                 }
@@ -258,44 +233,25 @@ class DefaultExtension extends MProvider {
             errors.push("GET-URL: " + (e.message || e));
         }
 
-        try {
-            const r = await this.client.post(
-                "https://graphql.anilist.co",
-                { "data": JSON.stringify({ query: minified, variables: variables || {} }) },
-                { "Content-Type": "application/json" }
-            );
-            if (r && r.body) {
-                const j = JSON.parse(r.body);
-                if (j.data) {
-                    return j.data;
-                }
-                if (j.errors && j.errors.length) {
-                    errors.push("POST-STR: " + j.errors[0].message);
-                }
-            }
-        } catch (e) {
-            errors.push("POST-STR: " + (e.message || e));
-        }
-
         throw new Error(errors.join(" || "));
     }
 
     // =========================================================
-    // Miruro pipe API
+    // Miruro pipe API — with browser headers + CORS proxy fallback
     // =========================================================
 
     async pipeRequest(payload) {
         const encoded = this.encodePipeRequest(payload);
         const errors = [];
 
+        // -------- Strategy 1: direct with browser headers --------
         for (const base of this.miruroBases) {
             const url = base + "/api/secure/pipe?e=" + encoded;
             try {
-                const response = await this.client.get(url, {
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-                    "Origin": base,
-                    "Referer": base + "/"
-                });
+                const response = await this.client.get(
+                    url,
+                    this.browserHeaders(base)
+                );
 
                 if (!response || !response.body) {
                     errors.push(base + ": empty");
@@ -309,19 +265,83 @@ class DefaultExtension extends MProvider {
                     continue;
                 }
 
+                // Detect Cloudflare block page
+                if (
+                    trimmed.indexOf("Cloudflare") !== -1 ||
+                    trimmed.indexOf("cf-error") !== -1 ||
+                    trimmed.indexOf("Attention Required") !== -1
+                ) {
+                    errors.push(base + ": CF-blocked");
+                    continue;
+                }
+
                 try {
                     return this.decodePipeResponse(trimmed);
                 } catch (decodeErr) {
                     errors.push(
                         base + ": decode → " +
                         (decodeErr.message || decodeErr) +
-                        " | raw=" + trimmed.substring(0, 40)
+                        " | raw=" + trimmed.substring(0, 30)
                     );
                     continue;
                 }
-
             } catch (e) {
                 errors.push(base + ": " + (e.message || e));
+            }
+        }
+
+        // -------- Strategy 2: public CORS proxy fallback --------
+        const proxies = [
+            "https://api.allorigins.win/raw?url=",
+            "https://corsproxy.io/?url="
+        ];
+
+        for (const proxyPrefix of proxies) {
+            for (const base of this.miruroBases) {
+                const target =
+                    base + "/api/secure/pipe?e=" + encoded;
+                const proxyUrl =
+                    proxyPrefix + encodeURIComponent(target);
+
+                try {
+                    const response = await this.client.get(proxyUrl);
+
+                    if (!response || !response.body) {
+                        continue;
+                    }
+
+                    const trimmed = response.body.trim();
+
+                    if (trimmed.length === 0) {
+                        continue;
+                    }
+
+                    if (
+                        trimmed.indexOf("Cloudflare") !== -1 ||
+                        trimmed.indexOf("Attention Required") !== -1
+                    ) {
+                        errors.push(
+                            "proxy[" + proxyPrefix.substring(8, 24) + "-" + base + "]: CF-blocked"
+                        );
+                        continue;
+                    }
+
+                    try {
+                        return this.decodePipeResponse(trimmed);
+                    } catch (decodeErr) {
+                        errors.push(
+                            "proxy[" + proxyPrefix.substring(8, 24) + "-" + base + "]: decode → " +
+                            (decodeErr.message || decodeErr) +
+                            " | raw=" + trimmed.substring(0, 30)
+                        );
+                        continue;
+                    }
+                } catch (e) {
+                    errors.push(
+                        "proxy[" + proxyPrefix.substring(8, 24) + "-" + base + "]: " +
+                        (e.message || e)
+                    );
+                }
             }
         }
 
@@ -352,7 +372,6 @@ class DefaultExtension extends MProvider {
         const image =
             media.coverImage &&
             (media.coverImage.extraLarge || media.coverImage.large);
-
         return {
             name: title,
             url: "https://www.miruro.to/info/" + media.id,
@@ -386,7 +405,6 @@ class DefaultExtension extends MProvider {
                     }
                 }
             `;
-
             const data = await this.anilistQuery(gql, {
                 page: page,
                 perPage: 30
@@ -395,7 +413,6 @@ class DefaultExtension extends MProvider {
             const list = (pageData.media || []).map(
                 (m) => this.mapMediaToItem(m)
             );
-
             if (list.length === 0) {
                 return {
                     list: [{
@@ -407,12 +424,10 @@ class DefaultExtension extends MProvider {
                     hasNextPage: false
                 };
             }
-
             return {
                 list: list,
                 hasNextPage: (pageData.pageInfo || {}).hasNextPage || false
             };
-
         } catch (err) {
             return {
                 list: [this.errorItem("Popular error", err)],
@@ -433,7 +448,6 @@ class DefaultExtension extends MProvider {
                     }
                 }
             `;
-
             const data = await this.anilistQuery(gql, {
                 page: page,
                 perPage: 30
@@ -442,12 +456,10 @@ class DefaultExtension extends MProvider {
             const list = (pageData.media || []).map(
                 (m) => this.mapMediaToItem(m)
             );
-
             return {
                 list: list,
                 hasNextPage: (pageData.pageInfo || {}).hasNextPage || false
             };
-
         } catch (err) {
             return {
                 list: [this.errorItem("Latest error", err)],
@@ -468,23 +480,19 @@ class DefaultExtension extends MProvider {
                     }
                 }
             `;
-
             const data = await this.anilistQuery(gql, {
                 search: query,
                 page: page,
                 perPage: 30
             });
-
             const pageData = data.Page || {};
             const list = (pageData.media || []).map(
                 (m) => this.mapMediaToItem(m)
             );
-
             return {
                 list: list,
                 hasNextPage: (pageData.pageInfo || {}).hasNextPage || false
             };
-
         } catch (err) {
             return {
                 list: [this.errorItem("Search error", err)],
@@ -526,7 +534,6 @@ class DefaultExtension extends MProvider {
                 }
             }
         `;
-
         const data = await this.anilistQuery(gql, { id: anilistId });
         const media = data.Media || {};
 
@@ -655,10 +662,7 @@ class DefaultExtension extends MProvider {
 
                 for (const stream of streams) {
                     const streamUrl = stream.url || stream.file || "";
-                    if (!streamUrl) {
-                        continue;
-                    }
-
+                    if (!streamUrl) continue;
                     videos.push({
                         url: streamUrl,
                         originalUrl: streamUrl,
@@ -682,3 +686,4 @@ class DefaultExtension extends MProvider {
     }
 
 }
+           
