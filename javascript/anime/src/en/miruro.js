@@ -237,7 +237,7 @@ class DefaultExtension extends MProvider {
     }
 
     // =========================================================
-    // Miruro pipe API — with browser headers + CORS proxy fallback
+    // Miruro pipe API — direct + multi-proxy fallback
     // =========================================================
 
     async pipeRequest(payload) {
@@ -265,7 +265,6 @@ class DefaultExtension extends MProvider {
                     continue;
                 }
 
-                // Detect Cloudflare block page
                 if (
                     trimmed.indexOf("Cloudflare") !== -1 ||
                     trimmed.indexOf("cf-error") !== -1 ||
@@ -290,18 +289,28 @@ class DefaultExtension extends MProvider {
             }
         }
 
-        // -------- Strategy 2: public CORS proxy fallback --------
-        const proxies = [
-            "https://api.allorigins.win/raw?url=",
-            "https://corsproxy.io/?url="
+        // -------- Strategy 2: multiple CORS proxies --------
+        const proxyBuilders = [
+            (t) => "https://api.allorigins.win/raw?url=" + encodeURIComponent(t),
+            (t) => "https://api.allorigins.win/get?url=" + encodeURIComponent(t),
+            (t) => "https://corsproxy.io/?url=" + encodeURIComponent(t),
+            (t) => "https://api.codetabs.com/v1/proxy?quest=" + encodeURIComponent(t),
+            (t) => "https://thingproxy.freeboard.io/fetch/" + t,
+            (t) => "https://www.whateverorigin.org/get?url=" + encodeURIComponent(t)
         ];
 
-        for (const proxyPrefix of proxies) {
+        for (let p = 0; p < proxyBuilders.length; p++) {
+            const build = proxyBuilders[p];
             for (const base of this.miruroBases) {
-                const target =
-                    base + "/api/secure/pipe?e=" + encoded;
-                const proxyUrl =
-                    proxyPrefix + encodeURIComponent(target);
+                const target = base + "/api/secure/pipe?e=" + encoded;
+                let proxyUrl;
+                try {
+                    proxyUrl = build(target);
+                } catch (e) {
+                    continue;
+                }
+
+                const tag = "proxy" + p + "[" + base.replace("https://www.", "") + "]";
 
                 try {
                     const response = await this.client.get(proxyUrl);
@@ -310,7 +319,26 @@ class DefaultExtension extends MProvider {
                         continue;
                     }
 
-                    const trimmed = response.body.trim();
+                    let trimmed = response.body.trim();
+
+                    if (trimmed.length === 0) {
+                        continue;
+                    }
+
+                    if (p === 1 || p === 5) {
+                        try {
+                            const wrapper = JSON.parse(trimmed);
+                            if (wrapper && wrapper.contents) {
+                                trimmed = wrapper.contents.trim();
+                            } else if (wrapper && wrapper.data) {
+                                trimmed = wrapper.data.trim();
+                            } else if (wrapper && typeof wrapper === "string") {
+                                trimmed = wrapper.trim();
+                            }
+                        } catch (e) {
+                            // not JSON
+                        }
+                    }
 
                     if (trimmed.length === 0) {
                         continue;
@@ -318,11 +346,10 @@ class DefaultExtension extends MProvider {
 
                     if (
                         trimmed.indexOf("Cloudflare") !== -1 ||
-                        trimmed.indexOf("Attention Required") !== -1
+                        trimmed.indexOf("Attention Required") !== -1 ||
+                        trimmed.indexOf("Just a moment") !== -1
                     ) {
-                        errors.push(
-                            "proxy[" + proxyPrefix.substring(8, 24) + "-" + base + "]: CF-blocked"
-                        );
+                        errors.push(tag + ": CF-blocked");
                         continue;
                     }
 
@@ -330,17 +357,14 @@ class DefaultExtension extends MProvider {
                         return this.decodePipeResponse(trimmed);
                     } catch (decodeErr) {
                         errors.push(
-                            "proxy[" + proxyPrefix.substring(8, 24) + "-" + base + "]: decode → " +
+                            tag + ": decode → " +
                             (decodeErr.message || decodeErr) +
                             " | raw=" + trimmed.substring(0, 30)
                         );
                         continue;
                     }
                 } catch (e) {
-                    errors.push(
-                        "proxy[" + proxyPrefix.substring(8, 24) + "-" + base + "]: " +
-                        (e.message || e)
-                    );
+                    errors.push(tag + ": " + (e.message || e));
                 }
             }
         }
@@ -686,4 +710,4 @@ class DefaultExtension extends MProvider {
     }
 
 }
-           
+                
