@@ -20,5 +20,27 @@
     "additionalParams": "",
     "sourceCodeLanguage": 1,
     "notes": "Miruro anime source"
+  },
+  {
+    "name": "AnimePahe",
+    "id": 617345894,
+    "baseUrl": "https://animepahe.ru",
+    "lang": "en",
+    "typeSource": "single",
+    "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://animepahe.ru",
+    "dateFormat": "",
+    "dateFormatLocale": "",
+    "isNsfw": false,
+    "hasCloudflare": false,
+    "sourceCodeUrl": "https://raw.githubusercontent.com/BR0k13/Roku/main/javascript/anime/src/en/animepahe.js",
+    "apiUrl": "",
+    "version": "0.1.0",
+    "isManga": false,
+    "itemType": 1,
+    "isFullData": false,
+    "appMinVerReq": "0.5.0",
+    "additionalParams": "",
+    "sourceCodeLanguage": 1,
+    "notes": "AnimePahe anime source"
   }
 ]
