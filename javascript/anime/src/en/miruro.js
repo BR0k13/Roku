@@ -12,12 +12,105 @@ class DefaultExtension extends MProvider {
     }
 
     // =========================================================
-    // Base64url + gzip helpers
+    // Base64 helpers (no btoa / atob)
     // =========================================================
 
+    _b64Chars() {
+        return "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    }
+
+    base64Encode(str) {
+        const chars = this._b64Chars();
+
+        let utf8 = "";
+        for (let i = 0; i < str.length; i++) {
+            const c = str.charCodeAt(i);
+            if (c < 0x80) {
+                utf8 += String.fromCharCode(c);
+            } else if (c < 0x800) {
+                utf8 += String.fromCharCode((c >> 6) | 0xC0);
+                utf8 += String.fromCharCode((c & 0x3F) | 0x80);
+            } else {
+                utf8 += String.fromCharCode((c >> 12) | 0xE0);
+                utf8 += String.fromCharCode(((c >> 6) & 0x3F) | 0x80);
+                utf8 += String.fromCharCode((c & 0x3F) | 0x80);
+            }
+        }
+
+        let result = "";
+        const len = utf8.length;
+        for (let i = 0; i < len; i += 3) {
+            const b1 = utf8.charCodeAt(i);
+            const b2 = i + 1 < len ? utf8.charCodeAt(i + 1) : 0;
+            const b3 = i + 2 < len ? utf8.charCodeAt(i + 2) : 0;
+
+            const e1 = b1 >> 2;
+            const e2 = ((b1 & 3) << 4) | (b2 >> 4);
+            const e3 = ((b2 & 15) << 2) | (b3 >> 6);
+            const e4 = b3 & 63;
+
+            result += chars.charAt(e1);
+            result += chars.charAt(e2);
+            result += i + 1 < len ? chars.charAt(e3) : "=";
+            result += i + 2 < len ? chars.charAt(e4) : "=";
+        }
+        return result;
+    }
+
     base64UrlEncode(str) {
-        const b64 = btoa(str);
-        return b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+        return this.base64Encode(str)
+            .replace(/\+/g, "-")
+            .replace(/\//g, "_")
+            .replace(/=+$/, "");
+    }
+
+    base64Decode(str) {
+        const chars = this._b64Chars();
+
+        let cleaned = "";
+        for (let i = 0; i < str.length; i++) {
+            const c = str.charAt(i);
+            if (chars.indexOf(c) !== -1) {
+                cleaned += c;
+            }
+        }
+
+        let bytes = "";
+        const len = cleaned.length;
+        for (let i = 0; i < len; i += 4) {
+            const e1 = chars.indexOf(cleaned.charAt(i));
+            const e2 = i + 1 < len ? chars.indexOf(cleaned.charAt(i + 1)) : 0;
+            const e3 = i + 2 < len ? chars.indexOf(cleaned.charAt(i + 2)) : 0;
+            const e4 = i + 3 < len ? chars.indexOf(cleaned.charAt(i + 3)) : 0;
+
+            const b1 = (e1 << 2) | (e2 >> 4);
+            const b2 = ((e2 & 15) << 4) | (e3 >> 2);
+            const b3 = ((e3 & 3) << 6) | e4;
+
+            bytes += String.fromCharCode(b1);
+            if (i + 2 < len) bytes += String.fromCharCode(b2);
+            if (i + 3 < len) bytes += String.fromCharCode(b3);
+        }
+
+        let output = "";
+        for (let i = 0; i < bytes.length; i++) {
+            const c = bytes.charCodeAt(i);
+            if (c < 0x80) {
+                output += String.fromCharCode(c);
+            } else if (c < 0xE0) {
+                const c2 = bytes.charCodeAt(i + 1);
+                output += String.fromCharCode(((c & 0x1F) << 6) | (c2 & 0x3F));
+                i++;
+            } else {
+                const c2 = bytes.charCodeAt(i + 1);
+                const c3 = bytes.charCodeAt(i + 2);
+                output += String.fromCharCode(
+                    ((c & 0x0F) << 12) | ((c2 & 0x3F) << 6) | (c3 & 0x3F)
+                );
+                i += 2;
+            }
+        }
+        return output;
     }
 
     base64UrlDecode(str) {
@@ -25,22 +118,49 @@ class DefaultExtension extends MProvider {
         while (s.length % 4) {
             s += "=";
         }
-        return atob(s);
+        return this.base64Decode(s);
     }
 
     base64ToBytes(b64) {
-        const binary = atob(b64);
-        const bytes = new Uint8Array(binary.length);
-        for (let i = 0; i < binary.length; i++) {
-            bytes[i] = binary.charCodeAt(i);
+        const chars = this._b64Chars();
+
+        let cleaned = "";
+        for (let i = 0; i < b64.length; i++) {
+            const c = b64.charAt(i);
+            if (chars.indexOf(c) !== -1) {
+                cleaned += c;
+            }
         }
-        return bytes;
+
+        const len = cleaned.length;
+        const outLen = Math.floor(len * 3 / 4);
+        const out = new Uint8Array(outLen);
+        let outIdx = 0;
+
+        for (let i = 0; i < len; i += 4) {
+            const e1 = chars.indexOf(cleaned.charAt(i));
+            const e2 = i + 1 < len ? chars.indexOf(cleaned.charAt(i + 1)) : 0;
+            const e3 = i + 2 < len ? chars.indexOf(cleaned.charAt(i + 2)) : 0;
+            const e4 = i + 3 < len ? chars.indexOf(cleaned.charAt(i + 3)) : 0;
+
+            const b1 = (e1 << 2) | (e2 >> 4);
+            const b2 = ((e2 & 15) << 4) | (e3 >> 2);
+            const b3 = ((e3 & 3) << 6) | e4;
+
+            if (outIdx < outLen) out[outIdx++] = b1 & 0xFF;
+            if (i + 2 < len && outIdx < outLen) out[outIdx++] = b2 & 0xFF;
+            if (i + 3 < len && outIdx < outLen) out[outIdx++] = b3 & 0xFF;
+        }
+
+        return out;
     }
 
-    // Try multiple gzip approaches.
+    // =========================================================
+    // Gzip decode
+    // =========================================================
+
     decodeGzip(bytes) {
 
-        // Approach 1: pako
         if (typeof pako !== "undefined" && pako.ungzip) {
             try {
                 return pako.ungzip(bytes, { to: "string" });
@@ -49,11 +169,7 @@ class DefaultExtension extends MProvider {
             }
         }
 
-        // Approach 2: Check if it's actually already plaintext (not gzipped).
-        // Gzip magic bytes are 0x1f 0x8b. If the first bytes aren't those,
-        // treat the data as plain UTF-8.
         if (bytes.length < 2 || bytes[0] !== 0x1f || bytes[1] !== 0x8b) {
-            // Not gzipped — decode as UTF-8 text
             let s = "";
             for (let i = 0; i < bytes.length; i++) {
                 s += String.fromCharCode(bytes[i]);
@@ -65,8 +181,6 @@ class DefaultExtension extends MProvider {
             }
         }
 
-        // Approach 3: DecompressionStream (async) — we can't do this
-        // in a sync context. Signal to caller.
         throw new Error(
             "gzip required but pako unavailable (first bytes: " +
             bytes[0] + "," + bytes[1] + ")"
@@ -434,11 +548,9 @@ class DefaultExtension extends MProvider {
                 version: "0.1.0"
             });
 
-            // Diagnostic: if response has no `providers` key, show its shape
             const providers = raw.providers;
 
             if (!providers) {
-                // Show what keys we actually got
                 const keys = Object.keys(raw).join(",");
                 episodes.push({
                     name: "[DIAG] response keys: " + keys,
@@ -477,7 +589,6 @@ class DefaultExtension extends MProvider {
             }
 
         } catch (pipeErr) {
-            // Surface the actual pipe error
             episodes.push({
                 name: "[PIPE ERROR] " + (pipeErr.message || String(pipeErr)),
                 url: "diag",
