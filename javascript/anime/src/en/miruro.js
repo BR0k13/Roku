@@ -59,28 +59,37 @@ class DefaultExtension extends MProvider {
     }
 
     // =========================================================
-    // AniList GraphQL — now uses GET instead of POST
+    // GraphQL query minifier
+    // =========================================================
+
+    minifyQuery(q) {
+        if (!q) {
+            return "";
+        }
+        return q
+            .replace(/\s+/g, " ")
+            .replace(/\s*([{}():,\[\]!])\s*/g, "$1")
+            .replace(/,\s*/g, ",")
+            .trim();
+    }
+
+    // =========================================================
+    // AniList GraphQL — GET with minified query
     // =========================================================
 
     async anilistQuery(query, variables) {
 
-        let url =
+        const minified = this.minifyQuery(query);
+
+        const url =
             "https://graphql.anilist.co?query=" +
-            encodeURIComponent(query);
+            encodeURIComponent(minified) +
+            "&variables=" +
+            encodeURIComponent(
+                JSON.stringify(variables || {})
+            );
 
-        if (variables) {
-            url +=
-                "&variables=" +
-                encodeURIComponent(
-                    JSON.stringify(variables)
-                );
-        }
-
-        const response = await this.client.get(url, {
-            "Accept": "application/json",
-            "User-Agent":
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-        });
+        const response = await this.client.get(url);
 
         if (!response || !response.body) {
             throw new Error("Empty response from AniList");
@@ -90,8 +99,9 @@ class DefaultExtension extends MProvider {
 
         if (json.errors) {
             throw new Error(
-                "AniList errors: " +
-                JSON.stringify(json.errors)
+                "AniList: " +
+                json.errors[0].message +
+                " (queryLen=" + minified.length + ")"
             );
         }
 
