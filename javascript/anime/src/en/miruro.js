@@ -63,23 +63,61 @@ class DefaultExtension extends MProvider {
     // =========================================================
 
     async anilistQuery(query, variables) {
-        const body = { query: query };
-        if (variables) {
-            body.variables = variables;
+        const payload = JSON.stringify({
+            query: query,
+            variables: variables || {}
+        });
+
+        // Try POST first (AniList's required method).
+        try {
+            const response = await this.client.post(
+                "https://graphql.anilist.co",
+                {
+                    "Content-Type": "application/json",
+                    "Accept": "application/json"
+                },
+                payload
+            );
+
+            if (response && response.body) {
+                const json = JSON.parse(response.body);
+                if (json.data) {
+                    return json.data;
+                }
+                // AniList returned errors
+                throw new Error(
+                    "AniList errors: " +
+                    JSON.stringify(json.errors || json)
+                );
+            }
+
+            throw new Error("Empty response from AniList");
+
+        } catch (postErr) {
+            // If POST failed, try the alternate signature.
+            // Some Mangayomi builds expect (url, body, headers).
+            try {
+                const response2 = await this.client.post(
+                    "https://graphql.anilist.co",
+                    payload,
+                    {
+                        "Content-Type": "application/json",
+                        "Accept": "application/json"
+                    }
+                );
+
+                if (response2 && response2.body) {
+                    const json2 = JSON.parse(response2.body);
+                    if (json2.data) {
+                        return json2.data;
+                    }
+                }
+            } catch (e2) {
+                // Both failed — re-throw the original
+            }
+
+            throw postErr;
         }
-
-        const response = await this.client.post(
-            "https://graphql.anilist.co",
-            {
-                "Content-Type": "application/json",
-                "Accept": "application/json",
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-            },
-            JSON.stringify(body)
-        );
-
-        const json = JSON.parse(response.body);
-        return json.data || {};
     }
 
     // =========================================================
@@ -143,75 +181,140 @@ class DefaultExtension extends MProvider {
         };
     }
 
+    // =========================================================
+    // Diagnostic helper — shows error as a list item
+    // =========================================================
+
+    errorItem(label, err) {
+        return {
+            name: label + ": " + (err && err.message ? err.message : String(err)),
+            url: "",
+            link: "",
+            imageUrl: ""
+        };
+    }
+
+    // =========================================================
+    // Endpoints
+    // =========================================================
+
     async getPopular(page) {
-        const gql = `
-            query ($page: Int, $perPage: Int) {
-                Page(page: $page, perPage: $perPage) {
-                    pageInfo { hasNextPage }
-                    media(type: ANIME, sort: POPULARITY_DESC) {
-                        ${this.mediaListFields()}
+        try {
+            const gql = `
+                query ($page: Int, $perPage: Int) {
+                    Page(page: $page, perPage: $perPage) {
+                        pageInfo { hasNextPage }
+                        media(type: ANIME, sort: POPULARITY_DESC) {
+                            ${this.mediaListFields()}
+                        }
                     }
                 }
+            `;
+
+            const data = await this.anilistQuery(gql, {
+                page: page,
+                perPage: 30
+            });
+            const pageData = data.Page || {};
+            const list = (pageData.media || []).map(
+                (m) => this.mapMediaToItem(m)
+            );
+
+            if (list.length === 0) {
+                return {
+                    list: [{
+                        name: "[AniList returned 0 items for page " + page + "]",
+                        url: "",
+                        link: "",
+                        imageUrl: ""
+                    }],
+                    hasNextPage: false
+                };
             }
-        `;
 
-        const data = await this.anilistQuery(gql, { page: page, perPage: 30 });
-        const pageData = data.Page || {};
-        const list = (pageData.media || []).map((m) => this.mapMediaToItem(m));
+            return {
+                list: list,
+                hasNextPage: (pageData.pageInfo || {}).hasNextPage || false
+            };
 
-        return {
-            list: list,
-            hasNextPage: (pageData.pageInfo || {}).hasNextPage || false
-        };
+        } catch (err) {
+            return {
+                list: [this.errorItem("Popular error", err)],
+                hasNextPage: false
+            };
+        }
     }
 
     async getLatestUpdates(page) {
-        const gql = `
-            query ($page: Int, $perPage: Int) {
-                Page(page: $page, perPage: $perPage) {
-                    pageInfo { hasNextPage }
-                    media(type: ANIME, sort: UPDATED_AT_DESC) {
-                        ${this.mediaListFields()}
+        try {
+            const gql = `
+                query ($page: Int, $perPage: Int) {
+                    Page(page: $page, perPage: $perPage) {
+                        pageInfo { hasNextPage }
+                        media(type: ANIME, sort: UPDATED_AT_DESC) {
+                            ${this.mediaListFields()}
+                        }
                     }
                 }
-            }
-        `;
+            `;
 
-        const data = await this.anilistQuery(gql, { page: page, perPage: 30 });
-        const pageData = data.Page || {};
-        const list = (pageData.media || []).map((m) => this.mapMediaToItem(m));
+            const data = await this.anilistQuery(gql, {
+                page: page,
+                perPage: 30
+            });
+            const pageData = data.Page || {};
+            const list = (pageData.media || []).map(
+                (m) => this.mapMediaToItem(m)
+            );
 
-        return {
-            list: list,
-            hasNextPage: (pageData.pageInfo || {}).hasNextPage || false
-        };
+            return {
+                list: list,
+                hasNextPage: (pageData.pageInfo || {}).hasNextPage || false
+            };
+
+        } catch (err) {
+            return {
+                list: [this.errorItem("Latest error", err)],
+                hasNextPage: false
+            };
+        }
     }
 
     async search(query, page, filters) {
-        const gql = `
-            query ($search: String, $page: Int, $perPage: Int) {
-                Page(page: $page, perPage: $perPage) {
-                    pageInfo { hasNextPage }
-                    media(search: $search, type: ANIME, sort: SEARCH_MATCH) {
-                        ${this.mediaListFields()}
+        try {
+            const gql = `
+                query ($search: String, $page: Int, $perPage: Int) {
+                    Page(page: $page, perPage: $perPage) {
+                        pageInfo { hasNextPage }
+                        media(search: $search, type: ANIME, sort: SEARCH_MATCH) {
+                            ${this.mediaListFields()}
+                        }
                     }
                 }
-            }
-        `;
+            `;
 
-        const data = await this.anilistQuery(gql, {
-            search: query,
-            page: page,
-            perPage: 30
-        });
+            const data = await this.anilistQuery(gql, {
+                search: query,
+                page: page,
+                perPage: 30
+            });
 
-        const pageData = data.Page || {};
-        const list = (pageData.media || []).map((m) => this.mapMediaToItem(m));
+            const pageData = data.Page || {};
+            const list = (pageData.media || []).map(
+                (m) => this.mapMediaToItem(m)
+            );
 
-        return {
-            list: list,
-            hasNextPage: (pageData.pageInfo || {}).hasNextPage || false
-        };
+            return {
+                list: list,
+                hasNextPage: (pageData.pageInfo || {}).hasNextPage || false
+            };
+
+        } catch (err) {
+            return {
+                list: [this.errorItem("Search error", err)],
+                hasNextPage: false
+            };
+        }
     }
 
     async getSearch(query, page, filters) {
@@ -225,7 +328,7 @@ class DefaultExtension extends MProvider {
         if (!anilistId) {
             return {
                 url: url,
-                title: "",
+                title: "No ID in URL",
                 imageUrl: "",
                 description: "",
                 author: "",
