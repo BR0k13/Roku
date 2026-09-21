@@ -59,65 +59,43 @@ class DefaultExtension extends MProvider {
     }
 
     // =========================================================
-    // AniList GraphQL
+    // AniList GraphQL — now uses GET instead of POST
     // =========================================================
 
     async anilistQuery(query, variables) {
-        const payload = JSON.stringify({
-            query: query,
-            variables: variables || {}
+
+        let url =
+            "https://graphql.anilist.co?query=" +
+            encodeURIComponent(query);
+
+        if (variables) {
+            url +=
+                "&variables=" +
+                encodeURIComponent(
+                    JSON.stringify(variables)
+                );
+        }
+
+        const response = await this.client.get(url, {
+            "Accept": "application/json",
+            "User-Agent":
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
         });
 
-        // Try POST first (AniList's required method).
-        try {
-            const response = await this.client.post(
-                "https://graphql.anilist.co",
-                {
-                    "Content-Type": "application/json",
-                    "Accept": "application/json"
-                },
-                payload
-            );
-
-            if (response && response.body) {
-                const json = JSON.parse(response.body);
-                if (json.data) {
-                    return json.data;
-                }
-                // AniList returned errors
-                throw new Error(
-                    "AniList errors: " +
-                    JSON.stringify(json.errors || json)
-                );
-            }
-
+        if (!response || !response.body) {
             throw new Error("Empty response from AniList");
-
-        } catch (postErr) {
-            // If POST failed, try the alternate signature.
-            // Some Mangayomi builds expect (url, body, headers).
-            try {
-                const response2 = await this.client.post(
-                    "https://graphql.anilist.co",
-                    payload,
-                    {
-                        "Content-Type": "application/json",
-                        "Accept": "application/json"
-                    }
-                );
-
-                if (response2 && response2.body) {
-                    const json2 = JSON.parse(response2.body);
-                    if (json2.data) {
-                        return json2.data;
-                    }
-                }
-            } catch (e2) {
-                // Both failed — re-throw the original
-            }
-
-            throw postErr;
         }
+
+        const json = JSON.parse(response.body);
+
+        if (json.errors) {
+            throw new Error(
+                "AniList errors: " +
+                JSON.stringify(json.errors)
+            );
+        }
+
+        return json.data || {};
     }
 
     // =========================================================
@@ -180,10 +158,6 @@ class DefaultExtension extends MProvider {
             imageUrl: image || ""
         };
     }
-
-    // =========================================================
-    // Diagnostic helper — shows error as a list item
-    // =========================================================
 
     errorItem(label, err) {
         return {
